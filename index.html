@@ -59,6 +59,10 @@ button.principal { background: var(--ambar); border-color: var(--ambar); color: 
 #lista li { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid var(--linea); }
 #lista li > span:first-child { min-width: 0; overflow-wrap: anywhere; }
 #lista .dist { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; }
+#velocimetro { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+#velocidad { font-size: 42px; font-weight: 800; font-variant-numeric: tabular-nums; }
+#velocimetro[data-exceso="si"] #velocidad { color: var(--rojo); }
+#limite { font-size: 17px; color: var(--suave); }
 #estado, footer { color: var(--suave); font-size: 14px; }
 </style>
 </head>
@@ -84,6 +88,7 @@ button.principal { background: var(--ambar); border-color: var(--ambar); color: 
   </label>
 
   <button class="principal" id="empezar" type="button">Empezar viaje</button>
+  <button id="atento" type="button">Modo atento, sin destino</button>
   <button id="demo" type="button">Ver demostración, sin salir</button>
   <p class="error" id="errorInicio" hidden></p>
   <button id="borrarClave" type="button" hidden>Cambiar la clave</button>
@@ -94,6 +99,9 @@ button.principal { background: var(--ambar); border-color: var(--ambar); color: 
   <div id="aviso" data-nivel="ok" aria-live="polite">
     <div id="avisoTitulo">Camino libre</div>
     <div id="avisoDetalle">Sin avisos por ahora</div>
+  </div>
+  <div id="velocimetro">
+    <span id="velocidad">--</span><span>km/h</span><span id="limite">Máxima: sin dato</span>
   </div>
   <div id="llegada" hidden>
     <div id="eta"></div>
@@ -109,15 +117,19 @@ button.principal { background: var(--ambar); border-color: var(--ambar); color: 
   <p id="estado" role="status"></p>
 </section>
 
-<footer>Radares: © colaboradores de OpenStreetMap (ODbL), pueden faltar o estar viejos. Tráfico: TomTom. Los avisos son una ayuda: mandan las señales y el cartel de velocidad.</footer>
+<footer>Radares: © colaboradores de OpenStreetMap (ODbL), pueden faltar o estar viejos. Tráfico: TomTom. La velocidad sale del GPS y es aproximada. Los avisos son una ayuda: mandan las señales y el cartel de velocidad.</footer>
 </main>
 
+<script src="clave.js"></script>
 <script src="radares.js"></script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
 
-const MINUTOS_ENTRE_CONSULTAS = 3;
+const MINUTOS_EN_MOVIMIENTO = 3;
+const MINUTOS_DETENIDO = 15;
+const TOPE_CONSULTAS_MES = 1500;   // TomTom da 2.500 gratis por mes y la prueba de la PC usa parte
+const TOLERANCIA_VELOCIDAD = 1.1;  // la ley da un 10 % de margen
 const RADIO_SIN_DESTINO_KM = 8;
 const CERCA_DE_LA_RUTA_M = 250;
 const AVISO_RADAR_M = 800;
@@ -207,7 +219,6 @@ async function pedir(url) {
   const r = await fetch(url);
   if (r.status === 401 || r.status === 403) throw new ErrorClave();
   if (!r.ok) throw new Error("codigo " + r.status);
-  contarConsulta();
   return r.json();
 }
 function contarConsulta() {
@@ -218,7 +229,16 @@ function contarConsulta() {
 function consultasDelMes() {
   return leer("consultas_mes") === new Date().toISOString().slice(0, 7) ? Number(leer("consultas_n")) || 0 : 0;
 }
-const clave = () => encodeURIComponent(leer("tomtom_clave") || "");
+const claveFija = () => window.CLAVE_WEB || "";
+const clave = () => encodeURIComponent(claveFija() || leer("tomtom_clave") || "");
+
+async function pedirLimiteDeCalle(pos) {
+  const u = "https://api.tomtom.com/search/2/reverseGeocode/" + pos.lat + "," + pos.lon + ".json?returnSpeedLimit=true&radius=30&key=" + clave();
+  const j = await pedir(u);
+  const a = j.addresses && j.addresses[0] && j.addresses[0].address;
+  const n = a && a.speedLimit ? parseInt(a.speedLimit, 10) : NaN;
+  return isNaN(n) ? null : n;
+}
 
 async function buscarDestino(texto) {
   const u = "https://api.tomtom.com/search/2/geocode/" + encodeURIComponent(texto) + ".json?countrySet=AR&limit=1&language=es-419&key=" + clave();
@@ -245,14 +265,17 @@ async function pedirIncidentes(caja) {
   const u = "https://api.tomtom.com/traffic/services/5/incidentDetails?bbox=" + caja.map(n => n.toFixed(5)).join(",") +
     "&fields=" + encodeURIComponent(CAMPOS) + "&language=es-ES&timeValidityFilter=present&key=" + clave();
   const j = await pedir(u);
+  contarConsulta();
   return j.incidents || [];
 }
 
 /* ---------- Viaje ---------- */
 let viaje = null;
-function viajeNuevo(demo) {
-  return { demo, pos: null, dest: null, limite: null, ruta: null, tramo: 0, incidentes: [], avisados: new Set(), radares: [],
-           seguimiento: null, reloj: null, relojDemo: null, bloqueo: null, ultimoEstadoLlegada: null, consultando: false };
+function viajeNuevo(demo, atento) {
+  return { demo, atento, pos: null, dest: null, limite: null, ruta: null, tramo: 0, incidentes: [], avisados: new Set(), radares: [],
+           seguimiento: null, reloj: null, relojDemo: null, bloqueo: null, ultimoEstadoLlegada: null, consultando: false,
+           ultimaConsulta: 0, posUltimaConsulta: null, ultimaDemora: null, topeAvisado: false,
+           limiteVia: null, ultimoLimite: 0, pidiendoLimite: false, lecturasExceso: 0, ultimoAvisoExceso: 0 };
 }
 
 function mostrarPantalla(enViaje) {
@@ -290,16 +313,16 @@ function radaresDeLaZona() {
   return lista.map(r => ({ lat: r[0], lon: r[1], vel: r[2] || null, id: "radar" + r[0] + "," + r[1] }));
 }
 
-async function empezar(demo) {
+async function empezar(demo, atento) {
   $("errorInicio").hidden = true;
-  if (!demo) {
+  if (!demo && !claveFija()) {
     const nueva = $("clave").value.trim();
     if (nueva) { guardar("tomtom_clave", nueva); $("clave").value = ""; }
     if (!leer("tomtom_clave")) return error("Falta la clave de TomTom. Pegala arriba.");
   }
   // La voz del iPhone solo se destraba desde un toque: por eso se habla acá mismo.
-  decir(demo ? "Demostración de Car Copilote." : "Car Copilote listo.");
-  viaje = viajeNuevo(demo);
+  decir(demo ? "Demostración de Car Copilote." : atento ? "Modo atento activado." : "Car Copilote listo.");
+  viaje = viajeNuevo(demo, atento);
   $("marcaDemo").hidden = !demo;
   $("empezar").disabled = true;
   try {
@@ -319,8 +342,8 @@ async function empezar(demo) {
 async function iniciarReal() {
   viaje.pos = await pedirUbicacionUnaVez();
   viaje.radares = radaresDeLaZona();
-  viaje.limite = horaLimiteComoFecha($("horaLimite").value);
-  const texto = $("destino").value.trim();
+  viaje.limite = viaje.atento ? null : horaLimiteComoFecha($("horaLimite").value);
+  const texto = viaje.atento ? "" : $("destino").value.trim();
   if (texto) {
     viaje.dest = await buscarDestino(texto);
     if (!viaje.dest) throw new Error("no encontré «" + texto + "»");
@@ -333,11 +356,25 @@ async function iniciarReal() {
   mantenerPantalla();
   viaje.seguimiento = navigator.geolocation.watchPosition(alMoverse, () => estado("Sin señal de GPS"), { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
   await consultar();
-  viaje.reloj = setInterval(consultar, MINUTOS_ENTRE_CONSULTAS * 60000);
+  viaje.reloj = setInterval(latido, 30000);
+}
+
+/* Parado consulta mucho menos, para que dejarlo abierto no gaste el cupo gratis. */
+function detenido() {
+  const v = viaje.pos.vel;
+  const cerca = viaje.posUltimaConsulta && metros(viaje.pos, viaje.posUltimaConsulta) < 300;
+  return cerca && (v == null || v < 8);
+}
+function latido() {
+  if (!viaje || !viaje.pos) return;
+  const minutos = detenido() ? MINUTOS_DETENIDO : MINUTOS_EN_MOVIMIENTO;
+  if (Date.now() - viaje.ultimaConsulta >= minutos * 60000) consultar();
 }
 
 function alMoverse(p) {
+  const v = p.coords.speed;
   const nuevo = { lat: p.coords.latitude, lon: p.coords.longitude,
+    vel: v != null && !isNaN(v) && v >= 0 ? v * 3.6 : null,
     rumbo: p.coords.heading != null && !isNaN(p.coords.heading) && p.coords.speed > 1 ? p.coords.heading : (viaje.pos ? viaje.pos.rumbo : null) };
   moverA(nuevo);
 }
@@ -354,12 +391,45 @@ function moverA(pos) {
     viaje.tramo = mejor;
   }
   revisarRadares();
+  revisarVelocidad();
   dibujar();
+}
+
+/* Máxima: la del radar cercano si la hay; si no, la que informa TomTom para esa calle. Muchas calles no la tienen. */
+function limiteActual() {
+  return (viaje.radarActivo && viaje.radarActivo.vel) ? Number(viaje.radarActivo.vel) : viaje.limiteVia;
+}
+async function actualizarLimiteVia() {
+  if (viaje.demo || viaje.pidiendoLimite || viaje.pos.vel == null || viaje.pos.vel < 20) return;
+  if (Date.now() - viaje.ultimoLimite < 60000) return;
+  const v = viaje;
+  v.pidiendoLimite = true; v.ultimoLimite = Date.now();
+  try { v.limiteVia = await pedirLimiteDeCalle(v.pos); }
+  catch (e) { v.limiteVia = null; }
+  finally { v.pidiendoLimite = false; }
+}
+function revisarVelocidad() {
+  actualizarLimiteVia();
+  const v = viaje.pos.vel, max = limiteActual();
+  if (v == null || !max) { viaje.lecturasExceso = 0; return; }
+  // Dos lecturas seguidas, para no avisar por un salto del GPS.
+  viaje.lecturasExceso = v > max * TOLERANCIA_VELOCIDAD ? viaje.lecturasExceso + 1 : 0;
+  if (viaje.lecturasExceso >= 2 && Date.now() - viaje.ultimoAvisoExceso > 120000) {
+    viaje.ultimoAvisoExceso = Date.now();
+    decir("Bajá la velocidad. Vas a " + Math.round(v) + ", la máxima es " + max + ".");
+  }
 }
 
 async function consultar() {
   if (!viaje || viaje.consultando || !viaje.pos) return;
+  if (consultasDelMes() >= TOPE_CONSULTAS_MES) {
+    if (!viaje.topeAvisado) { viaje.topeAvisado = true; decir("Llegué al tope de consultas de tráfico de este mes. Sigo avisando radares."); }
+    estado("Tope de consultas de tráfico del mes alcanzado: los radares siguen andando.");
+    return;
+  }
   viaje.consultando = true;
+  viaje.ultimaConsulta = Date.now();
+  viaje.posUltimaConsulta = viaje.pos;
   try {
     if (viaje.dest) {
       const r = await calcularRuta(viaje.pos, viaje.dest);
@@ -371,13 +441,14 @@ async function consultar() {
     estado("Actualizado a las " + hora(new Date()) + ". Consultas de este mes en este teléfono: " + consultasDelMes() + ".");
   } catch (e) {
     if (e instanceof ErrorClave) estado("TomTom rechazó la clave.");
-    else estado("Sin conexión con TomTom a las " + hora(new Date()) + ". Reintento en " + MINUTOS_ENTRE_CONSULTAS + " minutos.");
+    else estado("Sin conexión con TomTom a las " + hora(new Date()) + ". Vuelvo a intentar en unos minutos.");
   } finally {
     if (viaje) viaje.consultando = false;
   }
 }
 
 function aplicarIncidentes(lista) {
+  const anteriores = viaje.incidentes;
   viaje.incidentes = [];
   for (const inc of lista) {
     const p = inc.properties || {};
@@ -390,6 +461,12 @@ function aplicarIncidentes(lista) {
     if (!importa(p, puntos[0], viaje)) continue;
     const tipo = TIPOS[p.iconCategory];
     viaje.incidentes.push({ id: p.id, punto: puntos[0], tipo: tipo[0], nivel: tipo[1], calle: p.from || "", hacia: p.to || "", demora: p.delay || 0 });
+  }
+  // Cambios: también avisa cuando un problema grave deja de figurar.
+  for (const a of anteriores) {
+    if (a.nivel === "alto" && !viaje.incidentes.some(i => i.id === a.id)) {
+      decir("Ya no figura " + a.tipo.toLowerCase() + (a.calle ? " en " + a.calle : "") + ".");
+    }
   }
   avisarNuevos();
   dibujar();
@@ -412,8 +489,11 @@ function revisarRadares() {
     if (viaje.avisados.has(r.id)) continue;
     const d = metros(viaje.pos, r);
     if (d > AVISO_RADAR_M || !adelante(viaje.pos, r, 50)) continue;
+    // Parado cerca de un radar no hay nada que avisar.
+    if (viaje.pos.vel == null || viaje.pos.vel < 15) continue;
     if (viaje.ruta && distanciaARuta([r], viaje.ruta, viaje.tramo) > 60) continue;
-    viaje.avisados.add(r.id);
+    // Radares pegados (uno por sentido o repetidos en el mapa) cuentan como uno solo.
+    for (const otro of viaje.radares) if (metros(r, otro) < 300) viaje.avisados.add(otro.id);
     viaje.radarActivo = r;
     decir("Radar a " + vozDistancia(d) + (r.vel ? ". Máxima " + r.vel + "." : "."));
   }
@@ -422,6 +502,10 @@ function revisarRadares() {
 
 function actualizarLlegada(segundos, demora) {
   const llega = new Date(Date.now() + segundos * 1000);
+  if (viaje.ultimaDemora != null && demora - viaje.ultimaDemora >= 300) {
+    decir("El tráfico empeoró: " + Math.round((demora - viaje.ultimaDemora) / 60) + " minutos más de demora.");
+  }
+  viaje.ultimaDemora = demora;
   $("llegada").hidden = false;
   $("llegada").style.display = "grid";
   $("eta").textContent = hora(llega);
@@ -440,6 +524,10 @@ function actualizarLlegada(segundos, demora) {
 }
 
 function dibujar() {
+  const v = viaje.pos.vel, max = limiteActual();
+  $("velocidad").textContent = v == null ? "--" : String(Math.round(v));
+  $("limite").textContent = max ? "Máxima: " + max : "Máxima: sin dato";
+  $("velocimetro").dataset.exceso = v != null && max && v > max * TOLERANCIA_VELOCIDAD ? "si" : "no";
   const hay = viaje.incidentes.map(i => ({ ...i, m: metros(viaje.pos, i.punto) })).sort((a, b) => a.m - b.m);
   const aviso = $("aviso");
   if (viaje.radarActivo) {
@@ -487,7 +575,8 @@ function iniciarDemo() {
   const ruta = Array.from({ length: n + 1 }, (_, i) => ({ lat: a.lat + (b.lat - a.lat) * i / n, lon: a.lon + (b.lon - a.lon) * i / n }));
   viaje.ruta = ruta;
   viaje.dest = { nombre: "un destino de ejemplo" };
-  viaje.pos = { ...ruta[0], rumbo: rumbo(ruta[0], ruta[1]) };
+  viaje.pos = { ...ruta[0], vel: 118, rumbo: rumbo(ruta[0], ruta[1]) };
+  viaje.limiteVia = 100;
   viaje.radares = [{ ...ruta[22], vel: "100", id: "radarDemo" }];
   viaje.limite = new Date(Date.now() + 14 * 60000);
   mostrarPantalla(true);
@@ -501,13 +590,14 @@ function iniciarDemo() {
   let i = 0;
   viaje.relojDemo = setInterval(() => {
     i = Math.min(i + 2, n - 1);
-    moverA({ ...ruta[i], rumbo: rumbo(ruta[i], ruta[i + 1]) });
+    moverA({ ...ruta[i], vel: 118, rumbo: rumbo(ruta[i], ruta[i + 1]) });
   }, 1000);
 }
 
 /* ---------- Botones ---------- */
-$("empezar").addEventListener("click", () => empezar(false));
-$("demo").addEventListener("click", () => empezar(true));
+$("empezar").addEventListener("click", () => empezar(false, false));
+$("atento").addEventListener("click", () => empezar(false, true));
+$("demo").addEventListener("click", () => empezar(true, false));
 $("terminar").addEventListener("click", terminar);
 $("repetir").addEventListener("click", () => { if (ultimaFrase) decir(ultimaFrase); });
 $("borrarClave").addEventListener("click", () => {
@@ -519,7 +609,8 @@ document.addEventListener("visibilitychange", () => {
   if (!viaje.demo) { estado("La página estuvo en pausa: mientras no se ve, no avisa. Actualizando..."); consultar(); }
 });
 
-if (leer("tomtom_clave")) { $("bloqueClave").hidden = true; mostrarBotonClave(); }
+if (claveFija()) { $("bloqueClave").hidden = true; }
+else if (leer("tomtom_clave")) { $("bloqueClave").hidden = true; mostrarBotonClave(); }
 if (leer("ultimo_destino")) $("destino").value = leer("ultimo_destino");
 mostrarPantalla(false);
 </script>
