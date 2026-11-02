@@ -100,6 +100,13 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
     <button class="discreto" id="olvidarLugares" type="button">Olvidar mis lugares</button>
   </div>
 
+  <div class="bloque">
+    <h2>Mi agenda</h2>
+    <button id="conectarAgenda" type="button">Conectar agenda de Google</button>
+    <p class="ayuda" id="avisoAgenda">Solo lee tus citas de las próximas 24 horas. Google puede pedirte aprobarlo de nuevo cada tanto.</p>
+    <div class="bloque" id="listaAgenda"></div>
+  </div>
+
   <label id="bloqueClave">Clave de TomTom
     <input id="clave" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pegala una sola vez">
     <span class="ayuda">Queda guardada solo en este teléfono.</span>
@@ -128,16 +135,6 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
     <div class="bloque" id="resultadosCerca"></div>
   </div>
 
-  <div class="bloque">
-    <h2>Música para el viaje</h2>
-    <p class="ayuda" id="musicaTexto"></p>
-    <div class="tres">
-      <a class="boton" id="musicaSpotify" target="_blank" rel="noopener">Spotify</a>
-      <a class="boton" id="musicaApple" target="_blank" rel="noopener">Apple Music</a>
-      <a class="boton" id="musicaYoutube" target="_blank" rel="noopener">YouTube Music</a>
-    </div>
-    <p class="ayuda">Elegila antes de empezar el viaje. Después volvé acá: si esta página queda atrás, deja de avisar.</p>
-  </div>
 </section>
 
 <section id="pantallaViaje" style="display:grid;gap:16px" hidden>
@@ -179,6 +176,17 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
   <p id="estado" role="status"></p>
 </section>
 
+<section class="bloque" aria-label="Música">
+  <h2>Música</h2>
+  <p class="ayuda" id="musicaTexto"></p>
+  <div class="tres">
+    <a class="boton" id="musicaSpotify" target="_blank" rel="noopener">Spotify</a>
+    <a class="boton" id="musicaApple" target="_blank" rel="noopener">Apple Music</a>
+    <a class="boton" id="musicaYoutube" target="_blank" rel="noopener">YouTube Music</a>
+  </div>
+  <p class="ayuda">Hacelo estacionado. Después volvé acá: si esta página queda atrás, deja de avisar.</p>
+</section>
+
 <section class="bloque" aria-label="Avisos por voz">
   <h2>Avisos por voz</h2>
   <div class="fila" id="interruptores"></div>
@@ -189,6 +197,7 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async></script>
 <script src="clave.js"></script>
 <script src="radares.js"></script>
 <script src="zonas.js"></script>
@@ -516,6 +525,53 @@ async function buscarLugaresCerca(texto) {
   }
 }
 
+/* ---------- Agenda de Google: el permiso dura poco y queda solo en memoria ---------- */
+const GOOGLE_CLIENT_ID = "345979697228-40jsaarke9ku8ogeg7s63r7ji4652r6t.apps.googleusercontent.com";
+function conectarAgenda() {
+  const aviso = $("avisoAgenda");
+  if (!window.google || !google.accounts || !google.accounts.oauth2) {
+    aviso.textContent = "No se pudo cargar Google. Revisá la conexión y recargá la página.";
+    return;
+  }
+  const cliente = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: "https://www.googleapis.com/auth/calendar.readonly",
+    callback: r => {
+      if (r.error || !r.access_token) { aviso.textContent = "Google no dio el permiso. Podés volver a intentarlo."; return; }
+      leerAgenda(r.access_token);
+    },
+    error_callback: () => { aviso.textContent = "Se cerró la ventana de Google. Tocá de nuevo para conectar."; }
+  });
+  cliente.requestAccessToken();
+}
+async function leerAgenda(token) {
+  const aviso = $("avisoAgenda"), ahora = new Date();
+  aviso.textContent = "Leyendo tu agenda...";
+  try {
+    const hasta = new Date(ahora.getTime() + 24 * 3600000);
+    const u = "https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=6" +
+      "&timeMin=" + encodeURIComponent(ahora.toISOString()) + "&timeMax=" + encodeURIComponent(hasta.toISOString());
+    const r = await fetch(u, { headers: { Authorization: "Bearer " + token } });
+    if (!r.ok) throw new Error("codigo " + r.status);
+    const j = await r.json();
+    dibujarAgenda((j.items || []).filter(e => e.start && e.start.dateTime));
+  } catch (e) {
+    aviso.textContent = "No se pudo leer la agenda. Probá conectar de nuevo.";
+  }
+}
+function dibujarAgenda(citas) {
+  $("avisoAgenda").textContent = citas.length ? "Tocá una cita con dirección para salir hacia ahí." : "No tenés citas con horario en las próximas 24 horas.";
+  $("listaAgenda").replaceChildren(...citas.map(c => {
+    const inicio = new Date(c.start.dateTime), titulo = c.summary || "Cita";
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "lugar";
+    b.textContent = hora(inicio) + " · " + titulo + (c.location ? " · " + c.location : " (sin dirección)");
+    if (c.location) b.addEventListener("click", () => empezar(false, false, { buscar: c.location, etiqueta: titulo, limite: inicio }));
+    else b.disabled = true;
+    return b;
+  }));
+}
+
 /* ---------- Música: sugerencia según la hora, sin conocer tus gustos todavía ---------- */
 function dibujarMusica() {
   const h = new Date().getHours();
@@ -637,7 +693,13 @@ async function iniciarReal(lugar) {
   viaje.limite = viaje.atento ? null : horaLimiteComoFecha($("horaLimite").value);
   const texto = viaje.atento || lugar ? "" : $("destino").value.trim();
   $("abrirWaze").href = "https://waze.com/ul";
-  if (lugar) {
+  if (lugar && lugar.buscar) {
+    const hallado = await buscarDestino(lugar.buscar, viaje.pos);
+    if (!hallado) throw new Error("no encontré «" + lugar.buscar + "»");
+    hallado.etiqueta = lugar.etiqueta;
+    viaje.limite = lugar.limite;
+    fijarDestino(hallado);
+  } else if (lugar) {
     fijarDestino(lugar);
   } else if (texto) {
     const hallado = await buscarDestino(texto, viaje.pos);
@@ -900,6 +962,7 @@ function iniciarDemo() {
 }
 
 /* ---------- Botones ---------- */
+$("conectarAgenda").addEventListener("click", conectarAgenda);
 $("preguntaNo").addEventListener("click", () => { $("preguntaDestino").hidden = true; });
 $("favoritoSi").addEventListener("click", () => responderFavorito(true));
 $("favoritoNo").addEventListener("click", () => responderFavorito(false));
