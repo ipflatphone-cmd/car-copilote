@@ -187,6 +187,12 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
   <p class="ayuda">Hacelo estacionado. Después volvé acá: si esta página queda atrás, deja de avisar.</p>
 </section>
 
+<section class="bloque" aria-label="Voz">
+  <h2>Voz</h2>
+  <div class="tres" id="opcionesVoz"></div>
+  <p class="ayuda" id="vozActual"></p>
+</section>
+
 <section class="bloque" aria-label="Avisos por voz">
   <h2>Avisos por voz</h2>
   <div class="fila" id="interruptores"></div>
@@ -274,11 +280,52 @@ function importa(props, puntoCercano, viaje) {
 }
 
 /* ---------- Voz ---------- */
-let vozElegida = null;
+/* El navegador no informa si una voz es de mujer o de hombre: se reconoce por su nombre. */
+const VOCES_MUJER = /isabela|paulina|m[oó]nica|marisol|ang[eé]lica|francisca|soledad|luciana|sabina|elena|helena|laura|shelley|sandy|flo\b/i;
+const VOCES_HOMBRE = /diego|jorge|juan|carlos|pablo|enrique|miguel|andr[eé]s|alvaro|reed|eddy|rocko/i;
+const OPCIONES_TIPO_VOZ = [["mujer", "Mujer"], ["hombre", "Hombre"], ["mayordomo", "Mayordomo"]];
+const tipoVoz = () => leer("voz_tipo") || "mujer";
+let vozElegida = null, vozExacta = false;
 function elegirVoz() {
   if (!window.speechSynthesis) return;
-  const voces = speechSynthesis.getVoices();
-  vozElegida = voces.find(v => /^es[-_]AR/i.test(v.lang)) || voces.find(v => /^es[-_](419|MX|US)/i.test(v.lang)) || voces.find(v => /^es/i.test(v.lang)) || null;
+  const voces = speechSynthesis.getVoices().filter(v => /^es/i.test(v.lang));
+  const patron = tipoVoz() === "mujer" ? VOCES_MUJER : VOCES_HOMBRE;
+  const puntos = v => (/^es[-_]AR/i.test(v.lang) ? 3 : /^es[-_](419|MX|US)/i.test(v.lang) ? 2 : 1) + (/mejorada|enhanced|premium/i.test(v.name) ? 2 : 0);
+  const adecuadas = voces.filter(v => patron.test(v.name)).sort((a, b) => puntos(b) - puntos(a));
+  vozExacta = adecuadas.length > 0;
+  vozElegida = adecuadas[0] || voces.sort((a, b) => puntos(b) - puntos(a))[0] || null;
+  dibujarVoces();
+}
+function dibujarVoces() {
+  const caja = $("opcionesVoz");
+  if (!caja) return;
+  caja.replaceChildren(...OPCIONES_TIPO_VOZ.map(([tipo, nombre]) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.textContent = nombre; b.setAttribute("aria-pressed", tipoVoz() === tipo ? "true" : "false");
+    if (tipoVoz() === tipo) b.style.borderColor = "var(--verde)";
+    b.addEventListener("click", () => {
+      guardar("voz_tipo", tipo); elegirVoz();
+      if (window.speechSynthesis) speechSynthesis.cancel();
+      decir("Hola, así voy a hablarte en el auto.");
+    });
+    return b;
+  }));
+  $("vozActual").textContent = !vozElegida ? "Este iPhone no ofrece voces en español para la página."
+    : vozExacta ? "Usando: " + vozElegida.name + "."
+    : "No encontré una voz de ese tipo en este iPhone: uso " + vozElegida.name + ". Podés bajar más voces en Ajustes > Accesibilidad > Contenido leído.";
+}
+/* El mayordomo trata de usted y con formalidad. */
+function formal(f) {
+  return "Señor, " + f
+    .replace("Hola, así voy a hablarte en el auto.", "así le hablaré en el auto.")
+    .replace(/Bajá la velocidad\. Vas a (\d+), la máxima es (\d+)\./, "le sugiero reducir la velocidad. Va a $1 y la máxima es $2.")
+    .replace(/Paraste acá más de diez minutos\. ¿Lo guardo en favoritos\?/, "se ha detenido aquí más de diez minutos. ¿Desea guardarlo en favoritos?")
+    .replace(/^¿Vas a /, "¿se dirige a ")
+    .replace(/^Vamos a /, "nos dirigimos a ")
+    .replace(/con este tráfico llegás (\d+) minutos tarde/, "con este tráfico llegará $1 minutos tarde")
+    .replace(/^Llegás a las /, "llegará a las ")
+    .replace(/^Atención: /, "")
+    .replace(/^(Accidente|Peligro|Vehículo|Calle|Carril|Embotellamiento|Obra|Inundación|Radar|Máxima|Ya|El|Guardado|Modo|Demostración|Llegué)/, m => m.toLowerCase());
 }
 if (window.speechSynthesis) { elegirVoz(); speechSynthesis.onvoiceschanged = elegirVoz; }
 const OPCIONES_VOZ = [["cortes", "Calles cerradas"], ["radares", "Radares"], ["velocidad", "Velocidad"], ["trafico", "Tráfico"]];
@@ -300,12 +347,15 @@ let ultimaFrase = "";
 /* Sin tipo habla siempre (saludo, llegada tarde, preguntas). Con tipo respeta su interruptor. */
 function decir(frase, tipo) {
   if (tipo && vozApagada(tipo)) return;
+  const mayordomo = tipoVoz() === "mayordomo";
+  if (mayordomo) frase = formal(frase);
   ultimaFrase = frase;
   if (!window.speechSynthesis) return;
   const u = new SpeechSynthesisUtterance(frase);
   u.lang = vozElegida ? vozElegida.lang : "es-AR";
   if (vozElegida) u.voice = vozElegida;
-  u.rate = 1;
+  u.rate = mayordomo ? 0.95 : 1;
+  u.pitch = mayordomo ? 0.85 : 1;
   speechSynthesis.speak(u);
 }
 
@@ -971,7 +1021,13 @@ $("empezar").addEventListener("click", () => empezar(false, false));
 $("atento").addEventListener("click", () => empezar(false, true));
 $("demo").addEventListener("click", () => empezar(true, false));
 $("terminar").addEventListener("click", terminar);
-$("repetir").addEventListener("click", () => { if (ultimaFrase) decir(ultimaFrase); });
+$("repetir").addEventListener("click", () => {
+  if (!ultimaFrase || !window.speechSynthesis) return;
+  const u = new SpeechSynthesisUtterance(ultimaFrase);
+  u.lang = vozElegida ? vozElegida.lang : "es-AR";
+  if (vozElegida) u.voice = vozElegida;
+  speechSynthesis.speak(u);
+});
 $("borrarClave").addEventListener("click", () => {
   quitar("tomtom_clave"); $("bloqueClave").hidden = false; $("borrarClave").hidden = true; $("errorInicio").hidden = true; $("clave").focus();
 });
@@ -993,6 +1049,8 @@ $("buscarCerca").addEventListener("click", () => { const t = $("textoCerca").val
 dibujarInterruptores();
 dibujarSugerencias();
 dibujarMusica();
+elegirVoz();
+dibujarVoces();
 mostrarPantalla(false);
 </script>
 </body>
