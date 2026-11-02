@@ -31,7 +31,7 @@ h1 { font-size: 30px; margin: 0; letter-spacing: -.01em; }
 p { margin: 0; }
 label { display: grid; gap: 6px; font-weight: 600; }
 .ayuda { color: var(--suave); font-size: 15px; font-weight: 400; }
-input {
+input, select {
   width: 100%; min-height: 54px; padding: 10px 14px; font: inherit; color: var(--texto);
   background: var(--banquina); border: 2px solid var(--linea); border-radius: 10px;
 }
@@ -190,6 +190,8 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
 <section class="bloque" aria-label="Voz">
   <h2>Voz</h2>
   <div class="tres" id="opcionesVoz"></div>
+  <label for="vozLista" class="ayuda">Voces en español de este iPhone</label>
+  <select id="vozLista" hidden></select>
   <p class="ayuda" id="vozActual"></p>
 </section>
 
@@ -285,16 +287,24 @@ const VOCES_MUJER = /isabela|paulina|m[oó]nica|marisol|ang[eé]lica|francisca|s
 const VOCES_HOMBRE = /diego|jorge|juan|carlos|pablo|enrique|miguel|andr[eé]s|alvaro|reed|eddy|rocko/i;
 const OPCIONES_TIPO_VOZ = [["mujer", "Mujer"], ["hombre", "Hombre"], ["mayordomo", "Copi"]];
 const tipoVoz = () => leer("voz_tipo") || "mujer";
-let vozElegida = null, vozExacta = false;
+let vozElegida = null, vozExacta = false, vocesEspanol = [];
 function elegirVoz() {
   if (!window.speechSynthesis) return;
   const voces = speechSynthesis.getVoices().filter(v => /^es/i.test(v.lang));
   const patron = tipoVoz() === "mujer" ? VOCES_MUJER : VOCES_HOMBRE;
   const puntos = v => (/^es[-_]AR/i.test(v.lang) ? 3 : /^es[-_](419|MX|US)/i.test(v.lang) ? 2 : 1) + (/mejorada|enhanced|premium/i.test(v.name) ? 2 : 0);
   const adecuadas = voces.filter(v => patron.test(v.name)).sort((a, b) => puntos(b) - puntos(a));
-  vozExacta = adecuadas.length > 0;
-  vozElegida = adecuadas[0] || voces.sort((a, b) => puntos(b) - puntos(a))[0] || null;
+  const propia = voces.find(v => v.name === leer("voz_nombre_" + tipoVoz()));
+  vocesEspanol = voces;
+  vozExacta = !!propia || adecuadas.length > 0;
+  vozElegida = propia || adecuadas[0] || voces.slice().sort((a, b) => puntos(b) - puntos(a))[0] || null;
   dibujarVoces();
+}
+/* Sin una voz adecuada, el tono ayuda a distinguir las tres opciones. */
+function tonoVoz() {
+  const t = tipoVoz();
+  if (vozExacta) return t === "mayordomo" ? 0.85 : 1;
+  return t === "mujer" ? 1.15 : t === "hombre" ? 0.75 : 0.65;
 }
 function dibujarVoces() {
   const caja = $("opcionesVoz");
@@ -310,9 +320,17 @@ function dibujarVoces() {
     });
     return b;
   }));
-  $("vozActual").textContent = !vozElegida ? "Este iPhone no ofrece voces en español para la página."
-    : vozExacta ? "Usando: " + vozElegida.name + "."
-    : "No encontré una voz de ese tipo en este iPhone: uso " + vozElegida.name + ". Podés bajar más voces en Ajustes > Accesibilidad > Contenido leído.";
+  const lista = $("vozLista");
+  lista.hidden = lista.previousElementSibling.hidden = vocesEspanol.length === 0;
+  lista.replaceChildren(...vocesEspanol.map(v => {
+    const o = document.createElement("option");
+    o.value = v.name; o.textContent = v.name + " (" + v.lang + ")";
+    o.selected = !!vozElegida && v.name === vozElegida.name;
+    return o;
+  }));
+  $("vozActual").textContent = !vozElegida ? "Safari no muestra la lista de voces de este iPhone. Igual habla con su voz en español y cambia el tono según la opción."
+    : vozExacta ? "Usando: " + vozElegida.name + ". Podés elegir otra en la lista."
+    : "No reconocí una voz de ese tipo. Uso " + vozElegida.name + " con otro tono; probá las demás de la lista.";
 }
 /* El mayordomo trata de usted y con formalidad. */
 function formal(f) {
@@ -327,7 +345,12 @@ function formal(f) {
     .replace(/^Atención: /, "")
     .replace(/^(Accidente|Peligro|Vehículo|Calle|Carril|Embotellamiento|Obra|Inundación|Radar|Máxima|Ya|El|Guardado|Modo|Demostración|Llegué)/, m => m.toLowerCase());
 }
-if (window.speechSynthesis) { elegirVoz(); speechSynthesis.onvoiceschanged = elegirVoz; }
+/* Safari a veces entrega las voces tarde y sin avisar: se vuelve a mirar unas veces. */
+if (window.speechSynthesis) {
+  elegirVoz();
+  speechSynthesis.onvoiceschanged = elegirVoz;
+  [500, 1500, 4000].forEach(ms => setTimeout(() => { if (!vocesEspanol.length) elegirVoz(); }, ms));
+}
 const OPCIONES_VOZ = [["cortes", "Calles cerradas"], ["radares", "Radares"], ["velocidad", "Velocidad"], ["trafico", "Tráfico"]];
 const vozApagada = tipo => leer("voz_" + tipo) === "no";
 function dibujarInterruptores() {
@@ -355,7 +378,7 @@ function decir(frase, tipo) {
   u.lang = vozElegida ? vozElegida.lang : "es-AR";
   if (vozElegida) u.voice = vozElegida;
   u.rate = mayordomo ? 0.95 : 1;
-  u.pitch = mayordomo ? 0.85 : 1;
+  u.pitch = tonoVoz();
   speechSynthesis.speak(u);
 }
 
@@ -1013,6 +1036,11 @@ function iniciarDemo() {
 
 /* ---------- Botones ---------- */
 $("conectarAgenda").addEventListener("click", conectarAgenda);
+$("vozLista").addEventListener("change", e => {
+  guardar("voz_nombre_" + tipoVoz(), e.target.value); elegirVoz();
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  decir("Hola, así voy a hablarte en el auto.");
+});
 $("preguntaNo").addEventListener("click", () => { $("preguntaDestino").hidden = true; });
 $("favoritoSi").addEventListener("click", () => responderFavorito(true));
 $("favoritoNo").addEventListener("click", () => responderFavorito(false));
