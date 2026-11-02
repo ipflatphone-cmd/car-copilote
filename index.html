@@ -283,7 +283,7 @@ function importa(props, puntoCercano, viaje) {
 /* El navegador no informa si una voz es de mujer o de hombre: se reconoce por su nombre. */
 const VOCES_MUJER = /isabela|paulina|m[oó]nica|marisol|ang[eé]lica|francisca|soledad|luciana|sabina|elena|helena|laura|shelley|sandy|flo\b/i;
 const VOCES_HOMBRE = /diego|jorge|juan|carlos|pablo|enrique|miguel|andr[eé]s|alvaro|reed|eddy|rocko/i;
-const OPCIONES_TIPO_VOZ = [["mujer", "Mujer"], ["hombre", "Hombre"], ["mayordomo", "Mayordomo"]];
+const OPCIONES_TIPO_VOZ = [["mujer", "Mujer"], ["hombre", "Hombre"], ["mayordomo", "Copi"]];
 const tipoVoz = () => leer("voz_tipo") || "mujer";
 let vozElegida = null, vozExacta = false;
 function elegirVoz() {
