@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-title" content="Car Copilote">
 <meta name="robots" content="noindex">
 <title>Car Copilote</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 /* Tablero de auto: fondo asfalto, un solo aviso enorme, colores de cartel vial. */
 :root {
@@ -64,6 +65,23 @@ button.principal { background: var(--ambar); border-color: var(--ambar); color: 
 #velocimetro[data-exceso="si"] #velocidad { color: var(--rojo); }
 #limite { font-size: 17px; color: var(--suave); }
 #estado, footer { color: var(--suave); font-size: 14px; }
+#mapa { height: 36vh; min-height: 220px; border-radius: 12px; background: var(--banquina); }
+.tres button { font-size: 15px; min-height: 54px; padding: 6px; }
+.resultado { justify-content: space-between; gap: 10px; text-align: left; font-size: 16px; font-weight: 600; min-height: 54px; }
+.resultado span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.resultado span:last-child { flex: none; font-variant-numeric: tabular-nums; }
+h2 { font-size: 19px; margin: 0; }
+.bloque { display: grid; gap: 10px; }
+.tres { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tres .boton { font-size: 15px; min-height: 54px; padding: 6px; }
+.interruptor { justify-content: space-between; gap: 8px; min-height: 58px; font-size: 16px; text-align: left; }
+.interruptor span:last-child { flex: none; font-size: 14px; font-weight: 800; color: var(--suave); }
+.interruptor[aria-pressed="true"] { border-color: var(--verde); }
+.interruptor[aria-pressed="true"] span:last-child { color: var(--verde); }
+.lugar { justify-content: flex-start; text-align: left; overflow-wrap: anywhere; }
+#preguntaDestino { padding: 14px; border: 2px solid var(--ambar); border-radius: 12px; }
+#preguntaTitulo { font-size: 24px; font-weight: 800; }
+button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: var(--suave); }
 </style>
 </head>
 <body>
@@ -75,6 +93,12 @@ button.principal { background: var(--ambar); border-color: var(--ambar); color: 
     <h1>Car Copilote</h1>
   </div>
   <p class="ayuda">Dejá esta página abierta en el iPhone, en el soporte. Waze sigue guiando en la pantalla del auto y esto te avisa por voz. Configurá todo antes de arrancar.</p>
+
+  <div class="bloque" id="sugerencias" hidden>
+    <h2>¿Vas a alguno de tus lugares?</h2>
+    <div class="bloque" id="listaLugares"></div>
+    <button class="discreto" id="olvidarLugares" type="button">Olvidar mis lugares</button>
+  </div>
 
   <label id="bloqueClave">Clave de TomTom
     <input id="clave" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pegala una sola vez">
@@ -92,10 +116,37 @@ button.principal { background: var(--ambar); border-color: var(--ambar); color: 
   <button id="demo" type="button">Ver demostración, sin salir</button>
   <p class="error" id="errorInicio" hidden></p>
   <button id="borrarClave" type="button" hidden>Cambiar la clave</button>
+
+  <div class="bloque">
+    <h2>Buscar cerca de mí</h2>
+    <div class="tres" id="atajosCerca"></div>
+    <label>¿Qué necesitás?
+      <input id="textoCerca" type="search" placeholder="Ej.: gomería, cafetería, cajero" autocomplete="off">
+    </label>
+    <button id="buscarCerca" type="button">Buscar</button>
+    <p class="ayuda" id="avisoCerca">Más cercanos primero. Tocá uno para ir con Waze.</p>
+    <div class="bloque" id="resultadosCerca"></div>
+  </div>
+
+  <div class="bloque">
+    <h2>Música para el viaje</h2>
+    <p class="ayuda" id="musicaTexto"></p>
+    <div class="tres">
+      <a class="boton" id="musicaSpotify" target="_blank" rel="noopener">Spotify</a>
+      <a class="boton" id="musicaApple" target="_blank" rel="noopener">Apple Music</a>
+      <a class="boton" id="musicaYoutube" target="_blank" rel="noopener">YouTube Music</a>
+    </div>
+    <p class="ayuda">Elegila antes de empezar el viaje. Después volvé acá: si esta página queda atrás, deja de avisar.</p>
+  </div>
 </section>
 
 <section id="pantallaViaje" style="display:grid;gap:16px" hidden>
   <p class="marca" id="marcaDemo" hidden>Demostración: datos inventados</p>
+  <div class="bloque" id="preguntaDestino" hidden>
+    <div id="preguntaTitulo"></div>
+    <div class="bloque" id="preguntaOpciones"></div>
+    <button class="discreto" id="preguntaNo" type="button">No, seguir en modo atento</button>
+  </div>
   <div id="aviso" data-nivel="ok" aria-live="polite">
     <div id="avisoTitulo">Camino libre</div>
     <div id="avisoDetalle">Sin avisos por ahora</div>
@@ -103,6 +154,7 @@ button.principal { background: var(--ambar); border-color: var(--ambar); color: 
   <div id="velocimetro">
     <span id="velocidad">--</span><span>km/h</span><span id="limite">Máxima: sin dato</span>
   </div>
+  <div id="mapa" hidden></div>
   <div id="llegada" hidden>
     <div id="eta"></div>
     <div id="etaDetalle"></div>
@@ -117,11 +169,19 @@ button.principal { background: var(--ambar); border-color: var(--ambar); color: 
   <p id="estado" role="status"></p>
 </section>
 
-<footer>Radares: © colaboradores de OpenStreetMap (ODbL), pueden faltar o estar viejos. Tráfico: TomTom. La velocidad sale del GPS y es aproximada. Los avisos son una ayuda: mandan las señales y el cartel de velocidad.</footer>
+<section class="bloque" aria-label="Avisos por voz">
+  <h2>Avisos por voz</h2>
+  <div class="fila" id="interruptores"></div>
+  <p class="ayuda">Apagado no habla, pero el aviso se sigue viendo en pantalla. Cambialo estacionado.</p>
+</section>
+
+<footer>Radares, barrios y mapa: © colaboradores de OpenStreetMap (ODbL), pueden faltar o estar viejos. Tráfico y lugares: TomTom. La velocidad sale del GPS y es aproximada. Los avisos son una ayuda: mandan las señales y el cartel de velocidad.</footer>
 </main>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="clave.js"></script>
 <script src="radares.js"></script>
+<script src="zonas.js"></script>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -202,8 +262,25 @@ function elegirVoz() {
   vozElegida = voces.find(v => /^es[-_]AR/i.test(v.lang)) || voces.find(v => /^es[-_](419|MX|US)/i.test(v.lang)) || voces.find(v => /^es/i.test(v.lang)) || null;
 }
 if (window.speechSynthesis) { elegirVoz(); speechSynthesis.onvoiceschanged = elegirVoz; }
+const OPCIONES_VOZ = [["cortes", "Calles cerradas"], ["radares", "Radares"], ["velocidad", "Velocidad"], ["trafico", "Tráfico"]];
+const vozApagada = tipo => leer("voz_" + tipo) === "no";
+function dibujarInterruptores() {
+  $("interruptores").replaceChildren(...OPCIONES_VOZ.map(([tipo, nombre]) => {
+    const b = document.createElement("button");
+    b.type = "button"; b.className = "interruptor";
+    b.setAttribute("aria-pressed", vozApagada(tipo) ? "false" : "true");
+    const a = document.createElement("span"); a.textContent = nombre;
+    const e = document.createElement("span"); e.textContent = vozApagada(tipo) ? "OFF" : "ON";
+    b.append(a, e);
+    b.addEventListener("click", () => { guardar("voz_" + tipo, vozApagada(tipo) ? "si" : "no"); dibujarInterruptores(); });
+    return b;
+  }));
+}
+
 let ultimaFrase = "";
-function decir(frase) {
+/* Sin tipo habla siempre (saludo, llegada tarde, preguntas). Con tipo respeta su interruptor. */
+function decir(frase, tipo) {
+  if (tipo && vozApagada(tipo)) return;
   ultimaFrase = frase;
   if (!window.speechSynthesis) return;
   const u = new SpeechSynthesisUtterance(frase);
@@ -240,8 +317,166 @@ async function pedirLimiteDeCalle(pos) {
   return isNaN(n) ? null : n;
 }
 
-async function buscarDestino(texto) {
-  const u = "https://api.tomtom.com/search/2/geocode/" + encodeURIComponent(texto) + ".json?countrySet=AR&limit=1&language=es-419&key=" + clave();
+/* ---------- Lugares aprendidos: quedan solo en este teléfono ---------- */
+function leerLugares() {
+  try { return JSON.parse(leer("lugares") || "[]"); } catch (e) { return []; }
+}
+function recordarLugar(dest) {
+  const lista = leerLugares();
+  let l = lista.find(x => metros(x, dest) < 300);
+  if (!l) { l = { etiqueta: dest.etiqueta || dest.nombre, nombre: dest.nombre, lat: dest.lat, lon: dest.lon, usos: [] }; lista.push(l); }
+  const ahora = new Date();
+  l.usos.push({ d: ahora.getDay(), m: ahora.getHours() * 60 + ahora.getMinutes() });
+  l.usos = l.usos.slice(-40);
+  lista.sort((a, b) => b.usos.length - a.usos.length);
+  guardar("lugares", JSON.stringify(lista.slice(0, 20)));
+}
+/* Más puntos cuanto más veces se salió hacia ahí en un día parecido y a una hora parecida. */
+function puntaje(l, ahora) {
+  const min = ahora.getHours() * 60 + ahora.getMinutes();
+  const finde = d => d === 0 || d === 6;
+  return l.usos.reduce((p, u) => p + (finde(u.d) === finde(ahora.getDay()) && Math.abs(u.m - min) <= 90 ? 1 : 0.1), 0);
+}
+function lugaresSugeridos(pos) {
+  const ahora = new Date();
+  return leerLugares()
+    .filter(l => !pos || metros(pos, l) > 1000)
+    .map(l => ({ ...l, puntos: puntaje(l, ahora) }))
+    .sort((a, b) => b.puntos - a.puntos)
+    .slice(0, 3);
+}
+function botonLugar(l, alTocar) {
+  const b = document.createElement("button");
+  b.type = "button"; b.className = "lugar"; b.textContent = l.etiqueta;
+  b.addEventListener("click", () => alTocar(l));
+  return b;
+}
+function dibujarSugerencias() {
+  const lista = lugaresSugeridos(null);
+  $("sugerencias").hidden = lista.length === 0;
+  $("listaLugares").replaceChildren(...lista.map(l => botonLugar(l, x => empezar(false, false, x))));
+}
+function preguntarDestino() {
+  const lista = lugaresSugeridos(viaje.pos);
+  if (!lista.length) return;
+  $("preguntaTitulo").textContent = "¿Vas a " + lista[0].etiqueta + "?";
+  $("preguntaOpciones").replaceChildren(...lista.map(l => botonLugar(l, irA)));
+  $("preguntaDestino").hidden = false;
+  decir("¿Vas a " + lista[0].etiqueta + "?");
+}
+function fijarDestino(l) {
+  viaje.dest = l;
+  $("abrirWaze").href = "https://waze.com/ul?ll=" + l.lat + "," + l.lon + "&navigate=yes";
+  recordarLugar(l);
+}
+function irA(l) {
+  if (!viaje) return;
+  $("preguntaDestino").hidden = true;
+  viaje.atento = false;
+  fijarDestino(l);
+  decir("Vamos a " + l.etiqueta + ".");
+  consultar();
+}
+
+/* ---------- Zonas con máxima propia (zonas.js) ---------- */
+function adentro(pos, anillo) {
+  let c = false;
+  for (let i = 0, k = anillo.length - 1; i < anillo.length; k = i++) {
+    const a = anillo[i], b = anillo[k];
+    if ((a[0] > pos.lat) !== (b[0] > pos.lat) && pos.lon < (b[1] - a[1]) * (pos.lat - a[0]) / (b[0] - a[0]) + a[1]) c = !c;
+  }
+  return c;
+}
+function zonaDe(pos) {
+  if (typeof COMPLEJOS === "undefined") return null;
+  for (const z of ZONAS_ESPECIALES) if (adentro(pos, z.p)) return { nombre: z.nombre, max: z.maxima };
+  for (const b of BARRIOS) if (adentro(pos, b.p)) return { nombre: b.nombre, max: MAXIMA_BARRIO };
+  for (const c of COMPLEJOS) if (adentro(pos, c.p)) return { nombre: c.nombre, max: MAXIMA_COMPLEJO };
+  return null;
+}
+
+/* ---------- Mapa ---------- */
+let mapa = null, puntoYo = null, lineaRuta = null, capaAvisos = null, rutaDibujada = null, ultimoMapa = 0;
+function prepararMapa() {
+  if (!window.L || mapa) return;
+  $("mapa").hidden = false;
+  mapa = L.map("mapa", { zoomControl: false }).setView([viaje.pos.lat, viaje.pos.lon], 15);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(mapa);
+  capaAvisos = L.layerGroup().addTo(mapa);
+  puntoYo = L.circleMarker([viaje.pos.lat, viaje.pos.lon], { radius: 9, color: "#ffffff", weight: 3, fillColor: "#2f8cff", fillOpacity: 1 }).addTo(mapa);
+}
+function actualizarMapa(forzar) {
+  if (!mapa || !viaje) return;
+  if (!forzar && Date.now() - ultimoMapa < 2000) return;
+  ultimoMapa = Date.now();
+  const yo = [viaje.pos.lat, viaje.pos.lon];
+  puntoYo.setLatLng(yo);
+  mapa.setView(yo, mapa.getZoom(), { animate: false });
+  if (viaje.ruta !== rutaDibujada) {
+    if (lineaRuta) lineaRuta.remove();
+    lineaRuta = viaje.ruta ? L.polyline(viaje.ruta.map(p => [p.lat, p.lon]), { color: "#2f8cff", weight: 5, opacity: .75 }).addTo(mapa) : null;
+    rutaDibujada = viaje.ruta;
+  }
+  capaAvisos.clearLayers();
+  for (const r of viaje.radares) if (metros(viaje.pos, r) < 5000) {
+    L.circleMarker([r.lat, r.lon], { radius: 6, color: "#14181c", weight: 2, fillColor: "#ffb81c", fillOpacity: 1 }).addTo(capaAvisos);
+  }
+  for (const i of viaje.incidentes) {
+    L.circleMarker([i.punto.lat, i.punto.lon], { radius: 8, color: "#14181c", weight: 2, fillColor: i.nivel === "alto" ? "#ff5a4f" : "#ffb81c", fillOpacity: 1 }).addTo(capaAvisos);
+  }
+}
+function cerrarMapa() {
+  if (mapa) mapa.remove();
+  mapa = puntoYo = lineaRuta = capaAvisos = rutaDibujada = null;
+  $("mapa").hidden = true;
+}
+
+/* ---------- Buscar cerca: comercios y servicios ---------- */
+const ATAJOS_CERCA = [["Nafta", "estación de servicio"], ["Comida", "restaurante"], ["Farmacia", "farmacia"], ["Cajero", "cajero automático"], ["Súper", "supermercado"], ["Taller", "taller mecánico"]];
+async function buscarLugaresCerca(texto) {
+  const aviso = $("avisoCerca"), lista = $("resultadosCerca");
+  lista.replaceChildren();
+  aviso.textContent = "Buscando " + texto + "...";
+  try {
+    const pos = await pedirUbicacionUnaVez();
+    const u = "https://api.tomtom.com/search/2/poiSearch/" + encodeURIComponent(texto) + ".json?lat=" + pos.lat + "&lon=" + pos.lon +
+      "&radius=15000&limit=8&countrySet=AR&language=es-419&key=" + clave();
+    const j = await pedir(u);
+    const r = (j.results || []).map(x => ({ nombre: x.poi && x.poi.name || texto, lugar: { lat: x.position.lat, lon: x.position.lon } }))
+      .map(x => ({ ...x, m: metros(pos, x.lugar) })).sort((a, b) => a.m - b.m);
+    aviso.textContent = r.length ? "Más cercanos primero. Tocá uno para ir con Waze." : "No encontré nada cerca para «" + texto + "».";
+    lista.replaceChildren(...r.map(x => {
+      const a = document.createElement("a");
+      a.className = "boton resultado"; a.target = "_blank"; a.rel = "noopener";
+      a.href = "https://waze.com/ul?ll=" + x.lugar.lat + "," + x.lugar.lon + "&navigate=yes";
+      const n = document.createElement("span"); n.textContent = x.nombre;
+      const d = document.createElement("span"); d.textContent = textoDistancia(x.m);
+      a.append(n, d);
+      return a;
+    }));
+  } catch (e) {
+    if (e instanceof ErrorClave) aviso.textContent = "La búsqueda todavía no está habilitada en la clave de TomTom.";
+    else if (e.code) aviso.textContent = "Hace falta el permiso de ubicación para buscar cerca.";
+    else aviso.textContent = "No se pudo buscar. Revisá la conexión y probá de nuevo.";
+  }
+}
+
+/* ---------- Música: sugerencia según la hora, sin conocer tus gustos todavía ---------- */
+function dibujarMusica() {
+  const h = new Date().getHours();
+  const [texto, busqueda] = h < 10 ? ["Para arrancar el día: música tranquila.", "música tranquila para la mañana"]
+    : h < 14 ? ["Para el mediodía: pop en español.", "pop en español"]
+    : h < 19 ? ["Para la tarde: rock nacional.", "rock nacional"]
+    : ["Para volver: clásicos para relajarse.", "clásicos para relajarse"];
+  const q = encodeURIComponent(busqueda);
+  $("musicaTexto").textContent = texto;
+  $("musicaSpotify").href = "https://open.spotify.com/search/" + q;
+  $("musicaApple").href = "https://music.apple.com/search?term=" + q;
+  $("musicaYoutube").href = "https://music.youtube.com/search?q=" + q;
+}
+
+async function buscarDestino(texto, pos) {
+  const u = "https://api.tomtom.com/search/2/geocode/" + encodeURIComponent(texto) + ".json?countrySet=AR&limit=1&language=es-419&lat=" + pos.lat + "&lon=" + pos.lon + "&key=" + clave();
   const j = await pedir(u);
   const r = j.results && j.results[0];
   if (!r) return null;
@@ -283,6 +518,8 @@ function mostrarPantalla(enViaje) {
   $("pantallaInicio").style.display = enViaje ? "none" : "grid";
   $("pantallaViaje").hidden = !enViaje;
   $("pantallaViaje").style.display = enViaje ? "grid" : "none";
+  if (enViaje) { prepararMapa(); if (mapa) mapa.invalidateSize(); }
+  else cerrarMapa();
 }
 
 function error(texto) { const e = $("errorInicio"); e.textContent = texto; e.hidden = false; }
@@ -313,7 +550,7 @@ function radaresDeLaZona() {
   return lista.map(r => ({ lat: r[0], lon: r[1], vel: r[2] || null, id: "radar" + r[0] + "," + r[1] }));
 }
 
-async function empezar(demo, atento) {
+async function empezar(demo, atento, lugar) {
   $("errorInicio").hidden = true;
   if (!demo && !claveFija()) {
     const nueva = $("clave").value.trim();
@@ -327,7 +564,7 @@ async function empezar(demo, atento) {
   $("empezar").disabled = true;
   try {
     if (demo) iniciarDemo();
-    else await iniciarReal();
+    else await iniciarReal(lugar);
   } catch (e) {
     terminar();
     if (e instanceof ErrorClave) { mostrarBotonClave(); return error("TomTom rechazó la clave. Tocá «Cambiar la clave» y pegala de nuevo."); }
@@ -339,20 +576,22 @@ async function empezar(demo, atento) {
   }
 }
 
-async function iniciarReal() {
+async function iniciarReal(lugar) {
   viaje.pos = await pedirUbicacionUnaVez();
   viaje.radares = radaresDeLaZona();
   viaje.limite = viaje.atento ? null : horaLimiteComoFecha($("horaLimite").value);
-  const texto = viaje.atento ? "" : $("destino").value.trim();
-  if (texto) {
-    viaje.dest = await buscarDestino(texto);
-    if (!viaje.dest) throw new Error("no encontré «" + texto + "»");
-    $("abrirWaze").href = "https://waze.com/ul?ll=" + viaje.dest.lat + "," + viaje.dest.lon + "&navigate=yes";
-    guardar("ultimo_destino", texto);
-  } else {
-    $("abrirWaze").href = "https://waze.com/ul";
+  const texto = viaje.atento || lugar ? "" : $("destino").value.trim();
+  $("abrirWaze").href = "https://waze.com/ul";
+  if (lugar) {
+    fijarDestino(lugar);
+  } else if (texto) {
+    const hallado = await buscarDestino(texto, viaje.pos);
+    if (!hallado) throw new Error("no encontré «" + texto + "»");
+    hallado.etiqueta = texto;
+    fijarDestino(hallado);
   }
   mostrarPantalla(true);
+  if (viaje.atento) preguntarDestino();
   mantenerPantalla();
   viaje.seguimiento = navigator.geolocation.watchPosition(alMoverse, () => estado("Sin señal de GPS"), { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
   await consultar();
@@ -390,17 +629,21 @@ function moverA(pos) {
     }
     viaje.tramo = mejor;
   }
+  const zona = zonaDe(pos);
+  if ((zona && zona.nombre) !== (viaje.zona && viaje.zona.nombre) && zona) decir("Máxima " + zona.max + ".", "velocidad");
+  viaje.zona = zona;
   revisarRadares();
   revisarVelocidad();
   dibujar();
 }
 
-/* Máxima: la del radar cercano si la hay; si no, la que informa TomTom para esa calle. Muchas calles no la tienen. */
+/* Máxima: la del radar cercano; si no, la de la zona propia; si no, la que informa TomTom (muchas calles no la tienen). */
 function limiteActual() {
-  return (viaje.radarActivo && viaje.radarActivo.vel) ? Number(viaje.radarActivo.vel) : viaje.limiteVia;
+  if (viaje.radarActivo && viaje.radarActivo.vel) return Number(viaje.radarActivo.vel);
+  return viaje.zona ? viaje.zona.max : viaje.limiteVia;
 }
 async function actualizarLimiteVia() {
-  if (viaje.demo || viaje.pidiendoLimite || viaje.pos.vel == null || viaje.pos.vel < 20) return;
+  if (viaje.demo || viaje.zona || viaje.pidiendoLimite || viaje.pos.vel == null || viaje.pos.vel < 20) return;
   if (Date.now() - viaje.ultimoLimite < 60000) return;
   const v = viaje;
   v.pidiendoLimite = true; v.ultimoLimite = Date.now();
@@ -416,7 +659,7 @@ function revisarVelocidad() {
   viaje.lecturasExceso = v > max * TOLERANCIA_VELOCIDAD ? viaje.lecturasExceso + 1 : 0;
   if (viaje.lecturasExceso >= 2 && Date.now() - viaje.ultimoAvisoExceso > 120000) {
     viaje.ultimoAvisoExceso = Date.now();
-    decir("Bajá la velocidad. Vas a " + Math.round(v) + ", la máxima es " + max + ".");
+    decir("Bajá la velocidad. Vas a " + Math.round(v) + ", la máxima es " + max + ".", "velocidad");
   }
 }
 
@@ -460,12 +703,13 @@ function aplicarIncidentes(lista) {
     }
     if (!importa(p, puntos[0], viaje)) continue;
     const tipo = TIPOS[p.iconCategory];
-    viaje.incidentes.push({ id: p.id, punto: puntos[0], tipo: tipo[0], nivel: tipo[1], calle: p.from || "", hacia: p.to || "", demora: p.delay || 0 });
+    viaje.incidentes.push({ id: p.id, punto: puntos[0], tipo: tipo[0], nivel: tipo[1], calle: p.from || "", hacia: p.to || "", demora: p.delay || 0,
+                            voz: p.iconCategory === 8 ? "cortes" : "trafico" });
   }
   // Cambios: también avisa cuando un problema grave deja de figurar.
   for (const a of anteriores) {
     if (a.nivel === "alto" && !viaje.incidentes.some(i => i.id === a.id)) {
-      decir("Ya no figura " + a.tipo.toLowerCase() + (a.calle ? " en " + a.calle : "") + ".");
+      decir("Ya no figura " + a.tipo.toLowerCase() + (a.calle ? " en " + a.calle : "") + ".", a.voz);
     }
   }
   avisarNuevos();
@@ -480,7 +724,7 @@ function avisarNuevos() {
     let frase = i.tipo + " a " + vozDistancia(metros(viaje.pos, i.punto));
     if (i.calle) frase += ", en " + i.calle;
     if (i.demora >= 60) frase += ". Demora de " + Math.round(i.demora / 60) + " minutos";
-    decir(frase + ".");
+    decir(frase + ".", i.voz);
   }
 }
 
@@ -495,7 +739,7 @@ function revisarRadares() {
     // Radares pegados (uno por sentido o repetidos en el mapa) cuentan como uno solo.
     for (const otro of viaje.radares) if (metros(r, otro) < 300) viaje.avisados.add(otro.id);
     viaje.radarActivo = r;
-    decir("Radar a " + vozDistancia(d) + (r.vel ? ". Máxima " + r.vel + "." : "."));
+    decir("Radar a " + vozDistancia(d) + (r.vel ? ". Máxima " + r.vel + "." : "."), "radares");
   }
   if (viaje.radarActivo && (metros(viaje.pos, viaje.radarActivo) > AVISO_RADAR_M + 100 || !adelante(viaje.pos, viaje.radarActivo, 90))) viaje.radarActivo = null;
 }
@@ -503,7 +747,7 @@ function revisarRadares() {
 function actualizarLlegada(segundos, demora) {
   const llega = new Date(Date.now() + segundos * 1000);
   if (viaje.ultimaDemora != null && demora - viaje.ultimaDemora >= 300) {
-    decir("El tráfico empeoró: " + Math.round((demora - viaje.ultimaDemora) / 60) + " minutos más de demora.");
+    decir("El tráfico empeoró: " + Math.round((demora - viaje.ultimaDemora) / 60) + " minutos más de demora.", "trafico");
   }
   viaje.ultimaDemora = demora;
   $("llegada").hidden = false;
@@ -526,7 +770,8 @@ function actualizarLlegada(segundos, demora) {
 function dibujar() {
   const v = viaje.pos.vel, max = limiteActual();
   $("velocidad").textContent = v == null ? "--" : String(Math.round(v));
-  $("limite").textContent = max ? "Máxima: " + max : "Máxima: sin dato";
+  $("limite").textContent = (max ? "Máxima: " + max : "Máxima: sin dato") + (viaje.zona && !viaje.radarActivo ? ", " + viaje.zona.nombre : "");
+  actualizarMapa();
   $("velocimetro").dataset.exceso = v != null && max && v > max * TOLERANCIA_VELOCIDAD ? "si" : "no";
   const hay = viaje.incidentes.map(i => ({ ...i, m: metros(viaje.pos, i.punto) })).sort((a, b) => a.m - b.m);
   const aviso = $("aviso");
@@ -564,6 +809,8 @@ function terminar() {
   if (window.speechSynthesis) speechSynthesis.cancel();
   viaje = null;
   $("llegada").hidden = true; $("llegada").style.display = "none";
+  $("preguntaDestino").hidden = true;
+  dibujarSugerencias();
   mostrarPantalla(false);
 }
 
@@ -595,6 +842,8 @@ function iniciarDemo() {
 }
 
 /* ---------- Botones ---------- */
+$("preguntaNo").addEventListener("click", () => { $("preguntaDestino").hidden = true; });
+$("olvidarLugares").addEventListener("click", () => { quitar("lugares"); dibujarSugerencias(); });
 $("empezar").addEventListener("click", () => empezar(false, false));
 $("atento").addEventListener("click", () => empezar(false, true));
 $("demo").addEventListener("click", () => empezar(true, false));
@@ -611,7 +860,16 @@ document.addEventListener("visibilitychange", () => {
 
 if (claveFija()) { $("bloqueClave").hidden = true; }
 else if (leer("tomtom_clave")) { $("bloqueClave").hidden = true; mostrarBotonClave(); }
-if (leer("ultimo_destino")) $("destino").value = leer("ultimo_destino");
+$("atajosCerca").replaceChildren(...ATAJOS_CERCA.map(([nombre, texto]) => {
+  const b = document.createElement("button");
+  b.type = "button"; b.textContent = nombre;
+  b.addEventListener("click", () => buscarLugaresCerca(texto));
+  return b;
+}));
+$("buscarCerca").addEventListener("click", () => { const t = $("textoCerca").value.trim(); if (t) buscarLugaresCerca(t); });
+dibujarInterruptores();
+dibujarSugerencias();
+dibujarMusica();
 mostrarPantalla(false);
 </script>
 </body>
