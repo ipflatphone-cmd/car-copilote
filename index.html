@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Car Copilote">
+<meta name="robots" content="noindex">
+<title>Car Copilote</title>
+<style>
+/* Tablero de auto: fondo asfalto, un solo aviso enorme, colores de cartel vial. */
+:root {
+  color-scheme: dark;
+  --asfalto: #14181c; --banquina: #20262c; --linea: #39424b;
+  --texto: #f2f4f5; --suave: #a9b4bd;
+  --ambar: #ffb81c; --rojo: #ff5a4f; --verde: #4cd38a; --azul: #6db7ff;
+  --letra: -apple-system, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  background: var(--asfalto); color: var(--texto); font: 18px/1.35 var(--letra);
+  padding-block: max(14px, env(safe-area-inset-top, 0px)) max(18px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 620px; margin: 0 auto; display: grid; gap: 16px; }
+h1 { font-size: 30px; margin: 0; letter-spacing: -.01em; }
+p { margin: 0; }
+label { display: grid; gap: 6px; font-weight: 600; }
+.ayuda { color: var(--suave); font-size: 15px; font-weight: 400; }
+input {
+  width: 100%; min-height: 54px; padding: 10px 14px; font: inherit; color: var(--texto);
+  background: var(--banquina); border: 2px solid var(--linea); border-radius: 10px;
+}
+input:focus-visible, button:focus-visible, a:focus-visible { outline: 3px solid var(--azul); outline-offset: 2px; }
+button, .boton {
+  display: flex; align-items: center; justify-content: center; min-height: 60px; width: 100%;
+  padding: 10px 14px; font: 700 19px var(--letra); text-decoration: none; text-align: center;
+  color: var(--texto); background: var(--banquina); border: 2px solid var(--linea); border-radius: 10px; cursor: pointer;
+}
+button.principal { background: var(--ambar); border-color: var(--ambar); color: #14181c; font-size: 22px; min-height: 70px; }
+.fila { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.error { color: var(--rojo); font-weight: 600; }
+.marca { color: var(--ambar); font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+#aviso { min-height: 34vh; display: flex; flex-direction: column; justify-content: center; gap: 8px; padding: 18px; border-radius: 14px; background: var(--banquina); border-left: 12px solid var(--verde); }
+#aviso[data-nivel="alto"] { border-left-color: var(--rojo); }
+#aviso[data-nivel="medio"] { border-left-color: var(--ambar); }
+#avisoTitulo { font-size: clamp(36px, 11vw, 62px); font-weight: 800; line-height: 1.05; letter-spacing: -.02em; text-wrap: balance; }
+#avisoDetalle { font-size: 22px; color: var(--suave); overflow-wrap: anywhere; }
+#llegada { display: grid; grid-template-columns: auto 1fr; gap: 2px 14px; align-items: baseline; }
+#eta { font-size: 42px; font-weight: 800; font-variant-numeric: tabular-nums; }
+#etaDetalle { font-size: 17px; color: var(--suave); }
+#etaEstado { grid-column: 1 / -1; font-weight: 700; }
+#etaEstado[data-tarde="si"] { color: var(--rojo); }
+#etaEstado[data-tarde="no"] { color: var(--verde); }
+#lista { list-style: none; margin: 0; padding: 0; display: grid; }
+#lista li { display: flex; justify-content: space-between; gap: 12px; padding: 11px 0; border-top: 1px solid var(--linea); }
+#lista li > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+#lista .dist { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; }
+#estado, footer { color: var(--suave); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+
+<section id="pantallaInicio" style="display:grid;gap:16px">
+  <div>
+    <p class="marca">Prototipo de prueba</p>
+    <h1>Car Copilote</h1>
+  </div>
+  <p class="ayuda">Dejá esta página abierta en el iPhone, en el soporte. Waze sigue guiando en la pantalla del auto y esto te avisa por voz. Configurá todo antes de arrancar.</p>
+
+  <label id="bloqueClave">Clave de TomTom
+    <input id="clave" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pegala una sola vez">
+    <span class="ayuda">Queda guardada solo en este teléfono.</span>
+  </label>
+  <label>¿A dónde vas? <span class="ayuda">(opcional)</span>
+    <input id="destino" type="text" placeholder="Ej.: Aeropuerto de Ezeiza" autocomplete="off">
+  </label>
+  <label>Tengo que llegar a las <span class="ayuda">(opcional)</span>
+    <input id="horaLimite" type="time">
+  </label>
+
+  <button class="principal" id="empezar" type="button">Empezar viaje</button>
+  <button id="demo" type="button">Ver demostración, sin salir</button>
+  <p class="error" id="errorInicio" hidden></p>
+  <button id="borrarClave" type="button" hidden>Cambiar la clave</button>
+</section>
+
+<section id="pantallaViaje" style="display:grid;gap:16px" hidden>
+  <p class="marca" id="marcaDemo" hidden>Demostración: datos inventados</p>
+  <div id="aviso" data-nivel="ok" aria-live="polite">
+    <div id="avisoTitulo">Camino libre</div>
+    <div id="avisoDetalle">Sin avisos por ahora</div>
+  </div>
+  <div id="llegada" hidden>
+    <div id="eta"></div>
+    <div id="etaDetalle"></div>
+    <div id="etaEstado"></div>
+  </div>
+  <ul id="lista"></ul>
+  <div class="fila">
+    <button id="repetir" type="button">Repetir aviso</button>
+    <a class="boton" id="abrirWaze" href="https://waze.com/ul" target="_blank" rel="noopener">Abrir Waze</a>
+  </div>
+  <button id="terminar" type="button">Terminar viaje</button>
+  <p id="estado" role="status"></p>
+</section>
+
+<footer>Radares: © colaboradores de OpenStreetMap (ODbL), pueden faltar o estar viejos. Tráfico: TomTom. Los avisos son una ayuda: mandan las señales y el cartel de velocidad.</footer>
+</main>
+
+<script src="radares.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+const MINUTOS_ENTRE_CONSULTAS = 3;
+const RADIO_SIN_DESTINO_KM = 8;
+const CERCA_DE_LA_RUTA_M = 250;
+const AVISO_RADAR_M = 800;
+const CAMPOS = "{incidents{type,geometry{type,coordinates},properties{id,iconCategory,magnitudeOfDelay,from,to,delay,roadNumbers}}}";
+const TIPOS = { 1: ["Accidente", "alto"], 3: ["Peligro", "alto"], 14: ["Vehículo parado", "medio"], 8: ["Calle cortada", "alto"],
+                7: ["Carril cerrado", "medio"], 6: ["Embotellamiento", "medio"], 9: ["Obra", "medio"], 11: ["Inundación", "alto"] };
+const VIA_PRINCIPAL = /panamericana|autopista|acceso|ruta|riccheri|general paz|avenida|av\.|ramal/i;
+
+/* ---------- Guardado en el teléfono ---------- */
+function leer(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function guardar(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+function quitar(k) { try { localStorage.removeItem(k); } catch (e) {} }
+
+/* ---------- Cuentas de mapa ---------- */
+function metros(a, b) {
+  const rad = Math.PI / 180, x = (b.lon - a.lon) * rad * Math.cos((a.lat + b.lat) * rad / 2), y = (b.lat - a.lat) * rad;
+  return Math.hypot(x, y) * 6371000;
+}
+function rumbo(a, b) {
+  const rad = Math.PI / 180, x = (b.lon - a.lon) * Math.cos((a.lat + b.lat) * rad / 2), y = b.lat - a.lat;
+  return (Math.atan2(x, y) / rad + 360) % 360;
+}
+function adelante(pos, punto, grados) {
+  if (pos.rumbo == null) return true;
+  const d = Math.abs(((rumbo(pos, punto) - pos.rumbo + 540) % 360) - 180);
+  return d <= grados;
+}
+function textoDistancia(m) {
+  if (m < 950) return (Math.round(m / 50) * 50) + " m";
+  return (m / 1000).toFixed(m < 9500 ? 1 : 0).replace(".", ",") + " km";
+}
+function vozDistancia(m) {
+  if (m < 950) return (Math.round(m / 50) * 50) + " metros";
+  const km = Math.round(m / 500) / 2;
+  return String(km).replace(".", ",") + (km === 1 ? " kilómetro" : " kilómetros");
+}
+function hora(d) { return d.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false }); }
+
+/* Lo más cerca que pasa la ruta por una lista de puntos, mirando solo lo que falta recorrer. */
+function distanciaARuta(puntos, ruta, desde) {
+  let mejor = Infinity;
+  for (const p of puntos) for (let i = desde; i < ruta.length; i++) {
+    const d = metros(p, ruta[i]);
+    if (d < mejor) mejor = d;
+  }
+  return mejor;
+}
+function puntosDe(geometria) {
+  const c = geometria.type === "Point" ? [geometria.coordinates] : geometria.coordinates;
+  return c.map(x => ({ lon: x[0], lat: x[1] }));
+}
+
+/* ¿Vale la pena interrumpir al conductor por este incidente? */
+function importa(props, puntoCercano, viaje) {
+  const tipo = TIPOS[props.iconCategory];
+  if (!tipo) return false;
+  if (viaje.ruta) return true;   // ya se filtró por cercanía a la ruta
+  if (tipo[1] === "alto" && props.iconCategory !== 8) return true;
+  const nombre = (props.from || "") + " " + (props.to || "");
+  const principal = (props.roadNumbers && props.roadNumbers.length > 0) || VIA_PRINCIPAL.test(nombre);
+  if (props.iconCategory === 6) return (props.delay || 0) >= 300 || props.magnitudeOfDelay >= 3;
+  return principal;
+}
+
+/* ---------- Voz ---------- */
+let vozElegida = null;
+function elegirVoz() {
+  if (!window.speechSynthesis) return;
+  const voces = speechSynthesis.getVoices();
+  vozElegida = voces.find(v => /^es[-_]AR/i.test(v.lang)) || voces.find(v => /^es[-_](419|MX|US)/i.test(v.lang)) || voces.find(v => /^es/i.test(v.lang)) || null;
+}
+if (window.speechSynthesis) { elegirVoz(); speechSynthesis.onvoiceschanged = elegirVoz; }
+let ultimaFrase = "";
+function decir(frase) {
+  ultimaFrase = frase;
+  if (!window.speechSynthesis) return;
+  const u = new SpeechSynthesisUtterance(frase);
+  u.lang = vozElegida ? vozElegida.lang : "es-AR";
+  if (vozElegida) u.voice = vozElegida;
+  u.rate = 1;
+  speechSynthesis.speak(u);
+}
+
+/* ---------- TomTom ---------- */
+class ErrorClave extends Error {}
+async function pedir(url) {
+  const r = await fetch(url);
+  if (r.status === 401 || r.status === 403) throw new ErrorClave();
+  if (!r.ok) throw new Error("codigo " + r.status);
+  contarConsulta();
+  return r.json();
+}
+function contarConsulta() {
+  const mes = new Date().toISOString().slice(0, 7);
+  const n = (leer("consultas_mes") === mes ? Number(leer("consultas_n")) || 0 : 0) + 1;
+  guardar("consultas_mes", mes); guardar("consultas_n", String(n));
+}
+function consultasDelMes() {
+  return leer("consultas_mes") === new Date().toISOString().slice(0, 7) ? Number(leer("consultas_n")) || 0 : 0;
+}
+const clave = () => encodeURIComponent(leer("tomtom_clave") || "");
+
+async function buscarDestino(texto) {
+  const u = "https://api.tomtom.com/search/2/geocode/" + encodeURIComponent(texto) + ".json?countrySet=AR&limit=1&language=es-419&key=" + clave();
+  const j = await pedir(u);
+  const r = j.results && j.results[0];
+  if (!r) return null;
+  return { lat: r.position.lat, lon: r.position.lon, nombre: r.address.freeformAddress || texto };
+}
+async function calcularRuta(pos, dest) {
+  const u = "https://api.tomtom.com/routing/1/calculateRoute/" + pos.lat + "," + pos.lon + ":" + dest.lat + "," + dest.lon +
+    "/json?traffic=true&travelMode=car&key=" + clave();
+  const j = await pedir(u);
+  const r = j.routes[0];
+  return {
+    segundos: r.summary.travelTimeInSeconds, demora: r.summary.trafficDelayInSeconds,
+    puntos: r.legs.flatMap(l => l.points).map(p => ({ lat: p.latitude, lon: p.longitude }))
+  };
+}
+function cajaDe(puntos, margenGrados) {
+  const lats = puntos.map(p => p.lat), lons = puntos.map(p => p.lon);
+  return [Math.min(...lons) - margenGrados, Math.min(...lats) - margenGrados, Math.max(...lons) + margenGrados, Math.max(...lats) + margenGrados];
+}
+async function pedirIncidentes(caja) {
+  const u = "https://api.tomtom.com/traffic/services/5/incidentDetails?bbox=" + caja.map(n => n.toFixed(5)).join(",") +
+    "&fields=" + encodeURIComponent(CAMPOS) + "&language=es-ES&timeValidityFilter=present&key=" + clave();
+  const j = await pedir(u);
+  return j.incidents || [];
+}
+
+/* ---------- Viaje ---------- */
+let viaje = null;
+function viajeNuevo(demo) {
+  return { demo, pos: null, dest: null, limite: null, ruta: null, tramo: 0, incidentes: [], avisados: new Set(), radares: [],
+           seguimiento: null, reloj: null, relojDemo: null, bloqueo: null, ultimoEstadoLlegada: null, consultando: false };
+}
+
+function mostrarPantalla(enViaje) {
+  $("pantallaInicio").hidden = enViaje;
+  $("pantallaInicio").style.display = enViaje ? "none" : "grid";
+  $("pantallaViaje").hidden = !enViaje;
+  $("pantallaViaje").style.display = enViaje ? "grid" : "none";
+}
+
+function error(texto) { const e = $("errorInicio"); e.textContent = texto; e.hidden = false; }
+
+function pedirUbicacionUnaVez() {
+  return new Promise((ok, mal) => {
+    if (!navigator.geolocation) return mal(new Error("sin GPS"));
+    navigator.geolocation.getCurrentPosition(
+      p => ok({ lat: p.coords.latitude, lon: p.coords.longitude, rumbo: null }), mal,
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 10000 });
+  });
+}
+
+async function mantenerPantalla() {
+  try { if (navigator.wakeLock) viaje.bloqueo = await navigator.wakeLock.request("screen"); } catch (e) {}
+}
+
+function horaLimiteComoFecha(valor) {
+  if (!valor) return null;
+  const [h, m] = valor.split(":").map(Number);
+  const d = new Date(); d.setHours(h, m, 0, 0);
+  if (d.getTime() < Date.now() - 6 * 3600000) d.setDate(d.getDate() + 1);
+  return d;
+}
+
+function radaresDeLaZona() {
+  const lista = typeof RADARES === "undefined" ? [] : RADARES;
+  return lista.map(r => ({ lat: r[0], lon: r[1], vel: r[2] || null, id: "radar" + r[0] + "," + r[1] }));
+}
+
+async function empezar(demo) {
+  $("errorInicio").hidden = true;
+  if (!demo) {
+    const nueva = $("clave").value.trim();
+    if (nueva) { guardar("tomtom_clave", nueva); $("clave").value = ""; }
+    if (!leer("tomtom_clave")) return error("Falta la clave de TomTom. Pegala arriba.");
+  }
+  // La voz del iPhone solo se destraba desde un toque: por eso se habla acá mismo.
+  decir(demo ? "Demostración de Car Copilote." : "Car Copilote listo.");
+  viaje = viajeNuevo(demo);
+  $("marcaDemo").hidden = !demo;
+  $("empezar").disabled = true;
+  try {
+    if (demo) iniciarDemo();
+    else await iniciarReal();
+  } catch (e) {
+    terminar();
+    if (e instanceof ErrorClave) { mostrarBotonClave(); return error("TomTom rechazó la clave. Tocá «Cambiar la clave» y pegala de nuevo."); }
+    if (e.code === 1) return error("El iPhone no dio permiso de ubicación. Activalo en Ajustes > Privacidad > Localización > Sitios web de Safari.");
+    if (e.code === 2 || e.code === 3) return error("No se pudo obtener la ubicación. Probá de nuevo con cielo abierto.");
+    return error("No se pudo arrancar: " + e.message + ". Revisá la conexión y probá de nuevo.");
+  } finally {
+    $("empezar").disabled = false;
+  }
+}
+
+async function iniciarReal() {
+  viaje.pos = await pedirUbicacionUnaVez();
+  viaje.radares = radaresDeLaZona();
+  viaje.limite = horaLimiteComoFecha($("horaLimite").value);
+  const texto = $("destino").value.trim();
+  if (texto) {
+    viaje.dest = await buscarDestino(texto);
+    if (!viaje.dest) throw new Error("no encontré «" + texto + "»");
+    $("abrirWaze").href = "https://waze.com/ul?ll=" + viaje.dest.lat + "," + viaje.dest.lon + "&navigate=yes";
+    guardar("ultimo_destino", texto);
+  } else {
+    $("abrirWaze").href = "https://waze.com/ul";
+  }
+  mostrarPantalla(true);
+  mantenerPantalla();
+  viaje.seguimiento = navigator.geolocation.watchPosition(alMoverse, () => estado("Sin señal de GPS"), { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
+  await consultar();
+  viaje.reloj = setInterval(consultar, MINUTOS_ENTRE_CONSULTAS * 60000);
+}
+
+function alMoverse(p) {
+  const nuevo = { lat: p.coords.latitude, lon: p.coords.longitude,
+    rumbo: p.coords.heading != null && !isNaN(p.coords.heading) && p.coords.speed > 1 ? p.coords.heading : (viaje.pos ? viaje.pos.rumbo : null) };
+  moverA(nuevo);
+}
+
+function moverA(pos) {
+  if (!viaje) return;
+  viaje.pos = pos;
+  if (viaje.ruta) {
+    let mejor = viaje.tramo, menor = Infinity;
+    for (let i = viaje.tramo; i < Math.min(viaje.tramo + 200, viaje.ruta.length); i++) {
+      const d = metros(pos, viaje.ruta[i]);
+      if (d < menor) { menor = d; mejor = i; }
+    }
+    viaje.tramo = mejor;
+  }
+  revisarRadares();
+  dibujar();
+}
+
+async function consultar() {
+  if (!viaje || viaje.consultando || !viaje.pos) return;
+  viaje.consultando = true;
+  try {
+    if (viaje.dest) {
+      const r = await calcularRuta(viaje.pos, viaje.dest);
+      viaje.ruta = r.puntos; viaje.tramo = 0;
+      actualizarLlegada(r.segundos, r.demora);
+    }
+    const caja = viaje.ruta ? cajaDe(viaje.ruta, 0.01) : cajaDe([viaje.pos], RADIO_SIN_DESTINO_KM / 111);
+    aplicarIncidentes(await pedirIncidentes(caja));
+    estado("Actualizado a las " + hora(new Date()) + ". Consultas de este mes en este teléfono: " + consultasDelMes() + ".");
+  } catch (e) {
+    if (e instanceof ErrorClave) estado("TomTom rechazó la clave.");
+    else estado("Sin conexión con TomTom a las " + hora(new Date()) + ". Reintento en " + MINUTOS_ENTRE_CONSULTAS + " minutos.");
+  } finally {
+    if (viaje) viaje.consultando = false;
+  }
+}
+
+function aplicarIncidentes(lista) {
+  viaje.incidentes = [];
+  for (const inc of lista) {
+    const p = inc.properties || {};
+    const puntos = puntosDe(inc.geometry);
+    if (viaje.ruta) {
+      if (distanciaARuta(puntos, viaje.ruta, viaje.tramo) > CERCA_DE_LA_RUTA_M) continue;
+    } else if (!adelante(viaje.pos, puntos[0], 70) || metros(viaje.pos, puntos[0]) > RADIO_SIN_DESTINO_KM * 1000) {
+      continue;
+    }
+    if (!importa(p, puntos[0], viaje)) continue;
+    const tipo = TIPOS[p.iconCategory];
+    viaje.incidentes.push({ id: p.id, punto: puntos[0], tipo: tipo[0], nivel: tipo[1], calle: p.from || "", hacia: p.to || "", demora: p.delay || 0 });
+  }
+  avisarNuevos();
+  dibujar();
+}
+
+function avisarNuevos() {
+  const orden = viaje.incidentes.slice().sort((a, b) => metros(viaje.pos, a.punto) - metros(viaje.pos, b.punto));
+  for (const i of orden) {
+    if (viaje.avisados.has(i.id)) continue;
+    viaje.avisados.add(i.id);
+    let frase = i.tipo + " a " + vozDistancia(metros(viaje.pos, i.punto));
+    if (i.calle) frase += ", en " + i.calle;
+    if (i.demora >= 60) frase += ". Demora de " + Math.round(i.demora / 60) + " minutos";
+    decir(frase + ".");
+  }
+}
+
+function revisarRadares() {
+  for (const r of viaje.radares) {
+    if (viaje.avisados.has(r.id)) continue;
+    const d = metros(viaje.pos, r);
+    if (d > AVISO_RADAR_M || !adelante(viaje.pos, r, 50)) continue;
+    if (viaje.ruta && distanciaARuta([r], viaje.ruta, viaje.tramo) > 60) continue;
+    viaje.avisados.add(r.id);
+    viaje.radarActivo = r;
+    decir("Radar a " + vozDistancia(d) + (r.vel ? ". Máxima " + r.vel + "." : "."));
+  }
+  if (viaje.radarActivo && (metros(viaje.pos, viaje.radarActivo) > AVISO_RADAR_M + 100 || !adelante(viaje.pos, viaje.radarActivo, 90))) viaje.radarActivo = null;
+}
+
+function actualizarLlegada(segundos, demora) {
+  const llega = new Date(Date.now() + segundos * 1000);
+  $("llegada").hidden = false;
+  $("llegada").style.display = "grid";
+  $("eta").textContent = hora(llega);
+  $("etaDetalle").textContent = Math.round(segundos / 60) + " min" + (demora >= 60 ? ", " + Math.round(demora / 60) + " por tráfico" : "") + (viaje.dest && viaje.dest.nombre ? " a " + viaje.dest.nombre : "");
+  const e = $("etaEstado");
+  if (!viaje.limite) { e.textContent = ""; delete e.dataset.tarde; return; }
+  const margen = Math.round((viaje.limite - llega) / 60000);
+  const tarde = margen < 0;
+  e.dataset.tarde = tarde ? "si" : "no";
+  e.textContent = tarde ? "Llegás " + (-margen) + " min tarde" : "Llegás con " + margen + " min de margen";
+  const situacion = tarde ? "tarde" : "bien";
+  if (viaje.ultimoEstadoLlegada !== situacion) {
+    decir(tarde ? "Atención: con este tráfico llegás " + (-margen) + " minutos tarde." : "Llegás a las " + hora(llega) + ", a tiempo.");
+    viaje.ultimoEstadoLlegada = situacion;
+  }
+}
+
+function dibujar() {
+  const hay = viaje.incidentes.map(i => ({ ...i, m: metros(viaje.pos, i.punto) })).sort((a, b) => a.m - b.m);
+  const aviso = $("aviso");
+  if (viaje.radarActivo) {
+    aviso.dataset.nivel = "medio";
+    $("avisoTitulo").textContent = "Radar a " + textoDistancia(metros(viaje.pos, viaje.radarActivo));
+    $("avisoDetalle").textContent = viaje.radarActivo.vel ? "Máxima " + viaje.radarActivo.vel + " km/h" : "Velocidad máxima no informada";
+  } else if (hay.length) {
+    aviso.dataset.nivel = hay[0].nivel;
+    $("avisoTitulo").textContent = hay[0].tipo + " a " + textoDistancia(hay[0].m);
+    $("avisoDetalle").textContent = hay[0].calle + (hay[0].hacia ? " hacia " + hay[0].hacia : "");
+  } else {
+    aviso.dataset.nivel = "ok";
+    $("avisoTitulo").textContent = "Camino libre";
+    $("avisoDetalle").textContent = "Sin avisos por ahora";
+  }
+  const lista = $("lista");
+  lista.replaceChildren(...hay.slice(viaje.radarActivo ? 0 : 1, 5).map(i => {
+    const li = document.createElement("li");
+    const a = document.createElement("span"); a.textContent = i.tipo + (i.calle ? ", " + i.calle : "");
+    const b = document.createElement("span"); b.className = "dist"; b.textContent = textoDistancia(i.m);
+    li.append(a, b);
+    return li;
+  }));
+}
+
+function estado(t) { $("estado").textContent = t; }
+
+function terminar() {
+  if (viaje) {
+    if (viaje.seguimiento != null) navigator.geolocation.clearWatch(viaje.seguimiento);
+    clearInterval(viaje.reloj); clearInterval(viaje.relojDemo);
+    if (viaje.bloqueo) { try { viaje.bloqueo.release(); } catch (e) {} }
+  }
+  if (window.speechSynthesis) speechSynthesis.cancel();
+  viaje = null;
+  $("llegada").hidden = true; $("llegada").style.display = "none";
+  mostrarPantalla(false);
+}
+
+function mostrarBotonClave() { $("borrarClave").hidden = false; }
+
+/* ---------- Demostración: recorrido e incidentes inventados, sin usar TomTom ni GPS ---------- */
+function iniciarDemo() {
+  const a = { lat: -34.420, lon: -58.640 }, b = { lat: -34.530, lon: -58.500 }, n = 240;
+  const ruta = Array.from({ length: n + 1 }, (_, i) => ({ lat: a.lat + (b.lat - a.lat) * i / n, lon: a.lon + (b.lon - a.lon) * i / n }));
+  viaje.ruta = ruta;
+  viaje.dest = { nombre: "un destino de ejemplo" };
+  viaje.pos = { ...ruta[0], rumbo: rumbo(ruta[0], ruta[1]) };
+  viaje.radares = [{ ...ruta[22], vel: "100", id: "radarDemo" }];
+  viaje.limite = new Date(Date.now() + 14 * 60000);
+  mostrarPantalla(true);
+  actualizarLlegada(19 * 60, 6 * 60);
+  aplicarIncidentes([
+    { geometry: { type: "Point", coordinates: [ruta[70].lon, ruta[70].lat] }, properties: { id: "d1", iconCategory: 1, from: "Panamericana (ejemplo)", to: "Colectora (ejemplo)", delay: 420, roadNumbers: [] } },
+    { geometry: { type: "Point", coordinates: [ruta[150].lon, ruta[150].lat] }, properties: { id: "d2", iconCategory: 6, from: "Acceso Norte (ejemplo)", to: "", delay: 180, roadNumbers: [] } },
+    { geometry: { type: "Point", coordinates: [-58.90, -34.20] }, properties: { id: "lejos", iconCategory: 8, from: "Calle lejana (ejemplo)", to: "", delay: 0, roadNumbers: [] } }
+  ]);
+  estado("Demostración: el auto avanza solo. No usa tu ubicación ni tu cupo de TomTom.");
+  let i = 0;
+  viaje.relojDemo = setInterval(() => {
+    i = Math.min(i + 2, n - 1);
+    moverA({ ...ruta[i], rumbo: rumbo(ruta[i], ruta[i + 1]) });
+  }, 1000);
+}
+
+/* ---------- Botones ---------- */
+$("empezar").addEventListener("click", () => empezar(false));
+$("demo").addEventListener("click", () => empezar(true));
+$("terminar").addEventListener("click", terminar);
+$("repetir").addEventListener("click", () => { if (ultimaFrase) decir(ultimaFrase); });
+$("borrarClave").addEventListener("click", () => {
+  quitar("tomtom_clave"); $("bloqueClave").hidden = false; $("borrarClave").hidden = true; $("errorInicio").hidden = true; $("clave").focus();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || !viaje) return;
+  mantenerPantalla();
+  if (!viaje.demo) { estado("La página estuvo en pausa: mientras no se ve, no avisa. Actualizando..."); consultar(); }
+});
+
+if (leer("tomtom_clave")) { $("bloqueClave").hidden = true; mostrarBotonClave(); }
+if (leer("ultimo_destino")) $("destino").value = leer("ultimo_destino");
+mostrarPantalla(false);
+</script>
+</body>
+</html>
