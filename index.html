@@ -79,8 +79,8 @@ h2 { font-size: 19px; margin: 0; }
 .interruptor[aria-pressed="true"] { border-color: var(--verde); }
 .interruptor[aria-pressed="true"] span:last-child { color: var(--verde); }
 .lugar { justify-content: flex-start; text-align: left; overflow-wrap: anywhere; }
-#preguntaDestino { padding: 14px; border: 2px solid var(--ambar); border-radius: 12px; }
-#preguntaTitulo { font-size: 24px; font-weight: 800; }
+#preguntaDestino, #preguntaFavorito { padding: 14px; border: 2px solid var(--ambar); border-radius: 12px; }
+#preguntaTitulo, #favoritoTitulo { font-size: 24px; font-weight: 800; }
 button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: var(--suave); }
 </style>
 </head>
@@ -146,6 +146,16 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
     <div id="preguntaTitulo"></div>
     <div class="bloque" id="preguntaOpciones"></div>
     <button class="discreto" id="preguntaNo" type="button">No, seguir en modo atento</button>
+  </div>
+  <div class="bloque" id="preguntaFavorito" hidden>
+    <div id="favoritoTitulo">Paraste acá más de 10 minutos. ¿Lo guardo en favoritos?</div>
+    <label>Nombre
+      <input id="favoritoNombre" type="text" autocomplete="off">
+    </label>
+    <div class="fila">
+      <button id="favoritoSi" type="button">Guardar</button>
+      <button id="favoritoNo" type="button">No guardar</button>
+    </div>
   </div>
   <div id="aviso" data-nivel="ok" aria-live="polite">
     <div id="avisoTitulo">Camino libre</div>
@@ -364,6 +374,51 @@ function preguntarDestino() {
   $("preguntaDestino").hidden = false;
   decir("¿Vas a " + lista[0].etiqueta + "?");
 }
+/* Paradas de más de 10 minutos: solo se detectan mientras la página está abierta. */
+const MINUTOS_PARADA = 10;
+const RADIO_PARADA_M = 150;
+function leerDescartados() {
+  try { return JSON.parse(leer("no_favoritos") || "[]"); } catch (e) { return []; }
+}
+function revisarParada() {
+  if (!viaje || viaje.demo || !viaje.pos) return;
+  const v = viaje.pos.vel;
+  if (!viaje.parada || metros(viaje.pos, viaje.parada.pos) > RADIO_PARADA_M || (v != null && v > 10)) {
+    viaje.parada = { pos: viaje.pos, desde: Date.now(), revisada: false };
+    return;
+  }
+  if (viaje.parada.revisada || Date.now() - viaje.parada.desde < MINUTOS_PARADA * 60000) return;
+  viaje.parada.revisada = true;
+  const lugar = viaje.parada.pos;
+  if (leerLugares().some(l => metros(l, lugar) < 300) || leerDescartados().some(l => metros(l, lugar) < 300)) return;
+  preguntarFavorito(lugar);
+}
+async function preguntarFavorito(lugar) {
+  viaje.candidato = lugar;
+  $("favoritoNombre").value = "";
+  $("preguntaFavorito").hidden = false;
+  decir("Paraste acá más de diez minutos. ¿Lo guardo en favoritos?");
+  try {
+    const u = "https://api.tomtom.com/search/2/reverseGeocode/" + lugar.lat + "," + lugar.lon + ".json?radius=100&key=" + clave();
+    const j = await pedir(u);
+    const a = j.addresses && j.addresses[0] && j.addresses[0].address;
+    if (a && !$("favoritoNombre").value) $("favoritoNombre").value = a.streetName || a.freeformAddress || "";
+  } catch (e) {}
+}
+function responderFavorito(guardarlo) {
+  $("preguntaFavorito").hidden = true;
+  if (!viaje || !viaje.candidato) return;
+  const c = viaje.candidato;
+  viaje.candidato = null;
+  if (guardarlo) {
+    const nombre = $("favoritoNombre").value.trim() || "Lugar guardado";
+    recordarLugar({ lat: c.lat, lon: c.lon, nombre, etiqueta: nombre });
+    decir("Guardado.");
+  } else {
+    guardar("no_favoritos", JSON.stringify(leerDescartados().concat([{ lat: c.lat, lon: c.lon }]).slice(-50)));
+  }
+}
+
 function fijarDestino(l) {
   viaje.dest = l;
   $("abrirWaze").href = "https://waze.com/ul?ll=" + l.lat + "," + l.lon + "&navigate=yes";
@@ -606,6 +661,7 @@ function detenido() {
 }
 function latido() {
   if (!viaje || !viaje.pos) return;
+  revisarParada();
   const minutos = detenido() ? MINUTOS_DETENIDO : MINUTOS_EN_MOVIMIENTO;
   if (Date.now() - viaje.ultimaConsulta >= minutos * 60000) consultar();
 }
@@ -632,6 +688,7 @@ function moverA(pos) {
   const zona = zonaDe(pos);
   if ((zona && zona.nombre) !== (viaje.zona && viaje.zona.nombre) && zona) decir("Máxima " + zona.max + ".", "velocidad");
   viaje.zona = zona;
+  revisarParada();
   revisarRadares();
   revisarVelocidad();
   dibujar();
@@ -810,6 +867,7 @@ function terminar() {
   viaje = null;
   $("llegada").hidden = true; $("llegada").style.display = "none";
   $("preguntaDestino").hidden = true;
+  $("preguntaFavorito").hidden = true;
   dibujarSugerencias();
   mostrarPantalla(false);
 }
@@ -843,6 +901,8 @@ function iniciarDemo() {
 
 /* ---------- Botones ---------- */
 $("preguntaNo").addEventListener("click", () => { $("preguntaDestino").hidden = true; });
+$("favoritoSi").addEventListener("click", () => responderFavorito(true));
+$("favoritoNo").addEventListener("click", () => responderFavorito(false));
 $("olvidarLugares").addEventListener("click", () => { quitar("lugares"); dibujarSugerencias(); });
 $("empezar").addEventListener("click", () => empezar(false, false));
 $("atento").addEventListener("click", () => empezar(false, true));
