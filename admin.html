@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="es-AR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<title>Copi Administrador</title>
+<style>
+:root {
+  color-scheme: dark;
+  --asfalto: #14181c; --banquina: #20262c; --linea: #39424b;
+  --texto: #f2f4f5; --suave: #a9b4bd; --ambar: #ffb81c; --rojo: #ff5a4f; --verde: #4cd38a; --azul: #6db7ff;
+  --letra: -apple-system, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--asfalto); color: var(--texto); font: 17px/1.4 var(--letra);
+  padding-block: max(16px, env(safe-area-inset-top, 0px)) max(24px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 760px; margin: 0 auto; display: grid; gap: 22px; }
+h1 { font-size: 28px; margin: 0; }
+h2 { font-size: 20px; margin: 0; }
+p { margin: 0; }
+.marca { color: var(--ambar); font-size: 13px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.ayuda { color: var(--suave); font-size: 15px; }
+.bloque { display: grid; gap: 12px; }
+.tarjeta { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--linea); border-radius: 12px; background: var(--banquina); }
+label { display: grid; gap: 6px; font-weight: 600; }
+input[type=text], input[type=url], input[type=file] {
+  width: 100%; min-height: 50px; padding: 10px 12px; font: inherit; color: var(--texto);
+  background: var(--asfalto); border: 2px solid var(--linea); border-radius: 10px;
+}
+button {
+  min-height: 48px; padding: 8px 14px; font: 700 16px var(--letra); color: var(--texto);
+  background: var(--banquina); border: 2px solid var(--linea); border-radius: 10px; cursor: pointer;
+}
+button.principal { background: var(--ambar); border-color: var(--ambar); color: #14181c; }
+button.peligro { color: var(--rojo); }
+button:disabled { opacity: .55; cursor: default; }
+:focus-visible { outline: 3px solid var(--azul); outline-offset: 2px; }
+.numeros { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.numero { padding: 14px; border: 1px solid var(--linea); border-radius: 12px; background: var(--banquina); }
+.numero strong { display: block; font-size: 34px; font-variant-numeric: tabular-nums; }
+.numero span { color: var(--suave); font-size: 14px; }
+.tabla { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: 9px 8px; border-bottom: 1px solid var(--linea); text-align: left; }
+th { color: var(--suave); font-size: 14px; }
+td:not(:first-child), th:not(:first-child) { text-align: right; }
+.banner { display: grid; grid-template-columns: 150px 1fr; gap: 14px; padding: 12px; border: 1px solid var(--linea); border-radius: 12px; background: var(--banquina); }
+.banner img { width: 100%; aspect-ratio: 16 / 9; object-fit: contain; background: #000; border-radius: 8px; }
+.banner > div { min-width: 0; display: grid; gap: 8px; align-content: start; }
+.banner strong { overflow-wrap: anywhere; }
+.acciones { display: flex; flex-wrap: wrap; gap: 8px; }
+.estado { font-size: 14px; font-weight: 800; }
+.estado[data-activo="si"] { color: var(--verde); }
+.estado[data-activo="no"] { color: var(--suave); }
+#mensaje[data-tipo="error"] { color: var(--rojo); font-weight: 600; }
+#mensaje[data-tipo="ok"] { color: var(--verde); font-weight: 600; }
+#vistaPrevia { max-width: 100%; max-height: 220px; border-radius: 8px; }
+@media (max-width: 520px) { .banner { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <header class="bloque">
+    <p class="marca">Uso interno</p>
+    <h1>Copi: administrador</h1>
+    <p class="ayuda" id="quien"></p>
+  </header>
+
+  <section class="tarjeta" id="pantallaIngreso">
+    <h2>Ingresar</h2>
+    <p class="ayuda">Entrá con una cuenta de Google autorizada.</p>
+    <button class="principal" id="ingresar" type="button">Ingresar con Google</button>
+    <p id="errorIngreso" class="ayuda"></p>
+  </section>
+
+  <div class="bloque" id="pantallaPanel" hidden>
+    <section class="bloque">
+      <h2>Uso</h2>
+      <div class="numeros">
+        <div class="numero"><strong id="nTelefonos">–</strong><span>Teléfonos en total</span></div>
+        <div class="numero"><strong id="nHoy">–</strong><span>Teléfonos activos hoy</span></div>
+        <div class="numero"><strong id="nViajes">–</strong><span>Viajes en 7 días</span></div>
+        <div class="numero"><strong id="nAperturas">–</strong><span>Aperturas en 7 días</span></div>
+      </div>
+      <div class="tabla"><table>
+        <thead><tr><th scope="col">Día</th><th scope="col">Aperturas</th><th scope="col">Viajes</th></tr></thead>
+        <tbody id="tablaDias"></tbody>
+      </table></div>
+      <p class="ayuda">Copi no guarda ubicaciones, destinos, agenda ni datos personales: solo un código al azar por teléfono y estas sumas.</p>
+    </section>
+
+    <section class="tarjeta">
+      <h2>Nuevo banner</h2>
+      <form id="formBanner" class="bloque">
+        <label>Nombre
+          <input id="bTitulo" type="text" maxlength="80" required placeholder="Ej.: Promo de noviembre">
+        </label>
+        <label>Imagen
+          <input id="bImagen" type="file" accept="image/*" required>
+        </label>
+        <img id="vistaPrevia" alt="Vista previa del banner" hidden>
+        <label>Enlace al tocarlo <span class="ayuda">(opcional)</span>
+          <input id="bEnlace" type="url" placeholder="https://...">
+        </label>
+        <button class="principal" id="guardarBanner" type="submit">Guardar banner</button>
+      </form>
+      <p id="mensaje" role="status"></p>
+    </section>
+
+    <section class="bloque">
+      <h2>Banners</h2>
+      <p class="ayuda">Copi muestra los activos, solo con el auto detenido.</p>
+      <div class="bloque" id="listaBanners"></div>
+    </section>
+
+    <button id="salir" type="button">Salir</button>
+  </div>
+</main>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const ANCHO_MAXIMO = 1200, TAMANO_MAXIMO = 800000;
+firebase.initializeApp(window.FIREBASE_CONFIG);
+const auth = firebase.auth(), db = firebase.firestore();
+
+function aviso(texto, tipo) { const m = $("mensaje"); m.textContent = texto; m.dataset.tipo = tipo || ""; }
+function fechaISO(d) {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+
+/* Achica la imagen hasta que entre en la base de datos. */
+function comprimir(archivo) {
+  return new Promise((ok, mal) => {
+    const url = URL.createObjectURL(archivo), img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let ancho = Math.min(img.naturalWidth, ANCHO_MAXIMO), calidad = 0.82, datos = "";
+      const lienzo = document.createElement("canvas");
+      for (let i = 0; i < 8; i++) {
+        lienzo.width = ancho; lienzo.height = Math.round(img.naturalHeight * ancho / img.naturalWidth);
+        const c = lienzo.getContext("2d");
+        c.fillStyle = "#000"; c.fillRect(0, 0, lienzo.width, lienzo.height);
+        c.drawImage(img, 0, 0, lienzo.width, lienzo.height);
+        datos = lienzo.toDataURL("image/jpeg", calidad);
+        if (datos.length < TAMANO_MAXIMO) return ok(datos);
+        calidad = Math.max(0.45, calidad - 0.1); ancho = Math.round(ancho * 0.85);
+      }
+      mal(new Error("La imagen es demasiado pesada aun achicada."));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); mal(new Error("Ese archivo no parece una imagen.")); };
+    img.src = url;
+  });
+}
+
+function enlaceSeguro(texto) {
+  if (!texto) return "";
+  const u = new URL(texto);
+  if (u.protocol !== "https:") throw new Error("El enlace tiene que empezar con https://");
+  return u.href;
+}
+
+async function cargarBanners() {
+  const caja = $("listaBanners");
+  const instantanea = await db.collection("banners").orderBy("creado", "desc").get();
+  if (instantanea.empty) {
+    const p = document.createElement("p"); p.className = "ayuda"; p.textContent = "Todavía no hay banners. Cargá el primero arriba.";
+    caja.replaceChildren(p);
+    return;
+  }
+  caja.replaceChildren(...instantanea.docs.map(doc => {
+    const b = doc.data(), fila = document.createElement("article");
+    fila.className = "banner";
+    const img = document.createElement("img"); img.src = b.imagen; img.alt = "Banner " + b.titulo;
+    const datos = document.createElement("div");
+    const titulo = document.createElement("strong"); titulo.textContent = b.titulo;
+    const estado = document.createElement("span"); estado.className = "estado";
+    estado.dataset.activo = b.activo ? "si" : "no"; estado.textContent = b.activo ? "ACTIVO" : "PAUSADO";
+    datos.append(titulo, estado);
+    if (b.enlace) { const e = document.createElement("span"); e.className = "ayuda"; e.textContent = b.enlace; e.style.overflowWrap = "anywhere"; datos.append(e); }
+    const acciones = document.createElement("div"); acciones.className = "acciones";
+    const alternar = document.createElement("button"); alternar.type = "button"; alternar.textContent = b.activo ? "Pausar" : "Activar";
+    alternar.addEventListener("click", async () => {
+      alternar.disabled = true;
+      try { await doc.ref.update({ activo: !b.activo }); await cargarBanners(); }
+      catch (e) { aviso("No se pudo cambiar el banner.", "error"); alternar.disabled = false; }
+    });
+    const borrar = document.createElement("button"); borrar.type = "button"; borrar.className = "peligro"; borrar.textContent = "Borrar";
+    let armado = false;
+    borrar.addEventListener("click", async () => {
+      if (!armado) { armado = true; borrar.textContent = "Tocá de nuevo para borrar"; return; }
+      borrar.disabled = true;
+      try { await doc.ref.delete(); aviso("Banner borrado.", "ok"); await cargarBanners(); }
+      catch (e) { aviso("No se pudo borrar el banner.", "error"); borrar.disabled = false; }
+    });
+    acciones.append(alternar, borrar);
+    datos.append(acciones);
+    fila.append(img, datos);
+    return fila;
+  }));
+}
+
+async function cargarUso() {
+  const hoy = new Date(), inicioHoy = new Date(); inicioHoy.setHours(0, 0, 0, 0);
+  const total = await db.collection("telefonos").get();
+  $("nTelefonos").textContent = total.size;
+  $("nHoy").textContent = total.docs.filter(d => { const u = d.data().ultimo; return u && u.toDate() >= inicioHoy; }).length;
+  const dias = [];
+  for (let i = 0; i < 7; i++) { const d = new Date(hoy); d.setDate(d.getDate() - i); dias.push(fechaISO(d)); }
+  const filas = await Promise.all(dias.map(d => db.collection("dias").doc(d).get()));
+  let viajes = 0, aperturas = 0;
+  $("tablaDias").replaceChildren(...filas.map((f, i) => {
+    const v = f.exists ? (f.data().viajes || 0) : 0, a = f.exists ? (f.data().aperturas || 0) : 0;
+    viajes += v; aperturas += a;
+    const tr = document.createElement("tr");
+    [dias[i], a, v].forEach(t => { const td = document.createElement("td"); td.textContent = t; tr.append(td); });
+    return tr;
+  }));
+  $("nViajes").textContent = viajes; $("nAperturas").textContent = aperturas;
+}
+
+$("ingresar").addEventListener("click", async () => {
+  $("errorIngreso").textContent = "";
+  try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
+  catch (e) { $("errorIngreso").textContent = "No se pudo ingresar (" + (e.code || "error") + "). Probá de nuevo."; }
+});
+$("salir").addEventListener("click", () => auth.signOut());
+
+$("bImagen").addEventListener("change", async e => {
+  const a = e.target.files[0], v = $("vistaPrevia");
+  if (!a) { v.hidden = true; return; }
+  try { v.src = await comprimir(a); v.hidden = false; aviso("Imagen lista: " + Math.round(v.src.length / 1024) + " KB.", "ok"); }
+  catch (err) { v.hidden = true; aviso(err.message, "error"); }
+});
+
+$("formBanner").addEventListener("submit", async e => {
+  e.preventDefault();
+  const boton = $("guardarBanner"), archivo = $("bImagen").files[0];
+  boton.disabled = true;
+  try {
+    if (!archivo) throw new Error("Elegí una imagen.");
+    const enlace = enlaceSeguro($("bEnlace").value.trim());
+    const imagen = await comprimir(archivo);
+    await db.collection("banners").add({
+      titulo: $("bTitulo").value.trim(), imagen, enlace, activo: true,
+      creado: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    e.target.reset(); $("vistaPrevia").hidden = true;
+    aviso("Banner guardado y activo.", "ok");
+    await cargarBanners();
+  } catch (err) {
+    aviso(err.code === "permission-denied" ? "Esta cuenta no tiene permiso para guardar banners."
+      : err instanceof TypeError ? "Ese enlace no es válido." : err.message || "No se pudo guardar.", "error");
+  } finally {
+    boton.disabled = false;
+  }
+});
+
+auth.onAuthStateChanged(async usuario => {
+  $("pantallaIngreso").hidden = !!usuario;
+  $("pantallaPanel").hidden = true;
+  $("quien").textContent = usuario ? "Ingresaste como " + usuario.email : "";
+  if (!usuario) return;
+  try {
+    await cargarUso();
+    await cargarBanners();
+    $("pantallaPanel").hidden = false;
+  } catch (e) {
+    $("pantallaIngreso").hidden = false;
+    $("errorIngreso").textContent = e.code === "permission-denied"
+      ? "La cuenta " + usuario.email + " no está autorizada. Salí y entrá con otra cuenta."
+      : "No se pudieron cargar los datos. Revisá la conexión.";
+    await auth.signOut();
+  }
+});
+</script>
+</body>
+</html>

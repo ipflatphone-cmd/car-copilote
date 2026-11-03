@@ -66,6 +66,8 @@ button.principal { background: var(--ambar); border-color: var(--ambar); color: 
 #limite { font-size: 17px; color: var(--suave); }
 #estado, footer { color: var(--suave); font-size: 14px; }
 #mapa { height: 36vh; min-height: 220px; border-radius: 12px; background: var(--banquina); }
+#bannerCaja { display: block; height: 36vh; min-height: 200px; border-radius: 12px; overflow: hidden; background: #000; }
+#bannerImg { display: block; width: 100%; height: 100%; object-fit: contain; }
 .tres button { font-size: 15px; min-height: 54px; padding: 6px; }
 .resultado { justify-content: space-between; gap: 10px; text-align: left; font-size: 16px; font-weight: 600; min-height: 54px; }
 .resultado span:first-child { min-width: 0; overflow-wrap: anywhere; }
@@ -161,6 +163,7 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
   <div id="velocimetro">
     <span id="velocidad">--</span><span>km/h</span><span id="limite">Máxima: sin dato</span>
   </div>
+  <a id="bannerCaja" target="_blank" rel="noopener" hidden><img id="bannerImg" alt=""></a>
   <div id="mapa" hidden></div>
   <div id="llegada" hidden>
     <div id="eta"></div>
@@ -201,11 +204,14 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
   <p class="ayuda">Apagado no habla, pero el aviso se sigue viendo en pantalla. Cambialo estacionado.</p>
 </section>
 
-<footer>Radares: listado de la ANSV para rutas nacionales y © colaboradores de OpenStreetMap (ODbL); pueden faltar o estar viejos. Barrios y mapa: OpenStreetMap. Tráfico y lugares: TomTom. La velocidad sale del GPS y es aproximada. Los avisos son una ayuda: mandan las señales y el cartel de velocidad.</footer>
+<footer>Radares: listado de la ANSV para rutas nacionales y © colaboradores de OpenStreetMap (ODbL); pueden faltar o estar viejos. Barrios y mapa: OpenStreetMap. Tráfico y lugares: TomTom. La velocidad sale del GPS y es aproximada. Copi cuenta teléfonos y viajes de forma anónima, sin guardar ubicaciones ni destinos. Los avisos son una ayuda: mandan las señales y el cartel de velocidad.</footer>
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
 <script src="clave.js"></script>
 <script src="radares.js"></script>
 <script src="zonas.js"></script>
@@ -782,6 +788,9 @@ async function iniciarReal(lugar) {
   }
   mostrarPantalla(true);
   if (viaje.atento) preguntarDestino();
+  sumar("viajes");
+  cargarBannersActivos();
+  viaje.relojBanner = setInterval(revisarBanner, 3000);
   mantenerPantalla();
   viaje.seguimiento = navigator.geolocation.watchPosition(alMoverse, () => estado("Sin señal de GPS"), { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
   await consultar();
@@ -827,6 +836,7 @@ function moverA(pos) {
   revisarRadares();
   revisarVelocidad();
   dibujar();
+  revisarBanner();
 }
 
 /* Máxima: la del radar cercano; si no, la de la zona propia; si no, la que informa TomTom (muchas calles no la tienen). */
@@ -992,10 +1002,79 @@ function dibujar() {
 
 function estado(t) { $("estado").textContent = t; }
 
+/* ---------- Firebase: banners y contadores anónimos. Si falla, Copi sigue andando igual ---------- */
+const SEGUNDOS_PARA_BANNER = 15, SEGUNDOS_POR_BANNER = 20, VELOCIDAD_DETENIDO = 3;
+let baseDatos = null, banners = [];
+function fechaHoy() {
+  const d = new Date();
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function iniciarFirebase() {
+  try {
+    if (!window.firebase || !window.FIREBASE_CONFIG) return;
+    firebase.initializeApp(window.FIREBASE_CONFIG);
+    baseDatos = firebase.firestore();
+    sumar("aperturas");
+    registrarTelefono();
+    cargarBannersActivos();
+  } catch (e) { baseDatos = null; }
+}
+function sumar(campo) {
+  if (!baseDatos) return;
+  baseDatos.collection("dias").doc(fechaHoy()).set({ [campo]: firebase.firestore.FieldValue.increment(1) }, { merge: true }).catch(() => {});
+}
+/* Un código al azar por teléfono, sin ningún dato personal, una vez por día. */
+function registrarTelefono() {
+  if (!baseDatos || leer("telefono_dia") === fechaHoy()) return;
+  let codigo = leer("telefono_codigo");
+  if (!codigo) {
+    codigo = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
+    guardar("telefono_codigo", codigo);
+  }
+  baseDatos.collection("telefonos").doc(codigo).set({ ultimo: firebase.firestore.FieldValue.serverTimestamp() })
+    .then(() => guardar("telefono_dia", fechaHoy())).catch(() => {});
+}
+function cargarBannersActivos() {
+  if (!baseDatos) return;
+  baseDatos.collection("banners").where("activo", "==", true).get()
+    .then(r => { banners = r.docs.map(d => d.data()).filter(b => b.imagen); }).catch(() => {});
+}
+/* Solo con el auto detenido, sin avisos importantes ni preguntas abiertas. */
+function puedeVerBanner() {
+  if (!viaje || !banners.length || viaje.radarActivo) return false;
+  if (!$("preguntaDestino").hidden || !$("preguntaFavorito").hidden) return false;
+  if (viaje.incidentes.some(i => i.nivel === "alto")) return false;
+  return !!viaje.detenidoDesde && Date.now() - viaje.detenidoDesde >= SEGUNDOS_PARA_BANNER * 1000;
+}
+function revisarBanner() {
+  if (!viaje) return;
+  const v = viaje.pos && viaje.pos.vel;
+  if (v == null || v >= VELOCIDAD_DETENIDO) viaje.detenidoDesde = null;
+  else if (!viaje.detenidoDesde) viaje.detenidoDesde = Date.now();
+  const caja = $("bannerCaja"), mostrar = puedeVerBanner(), estabaOculta = caja.hidden;
+  if (!mostrar) {
+    if (!estabaOculta) {
+      caja.hidden = true; caja.removeAttribute("href");
+      if (mapa) { $("mapa").hidden = false; mapa.invalidateSize(); actualizarMapa(true); }
+    }
+    return;
+  }
+  const paso = Math.floor((Date.now() - viaje.detenidoDesde) / (SEGUNDOS_POR_BANNER * 1000)) % banners.length;
+  if (estabaOculta || viaje.bannerPaso !== paso) {
+    const b = banners[paso], enlace = b.enlace && /^https:\/\//.test(b.enlace) ? b.enlace : "";
+    $("bannerImg").src = b.imagen; $("bannerImg").alt = "Publicidad: " + (b.titulo || "");
+    if (enlace) caja.href = enlace; else caja.removeAttribute("href");
+    viaje.bannerPaso = paso;
+  }
+  caja.hidden = false;
+  $("mapa").hidden = true;
+}
+
 function terminar() {
   if (viaje) {
     if (viaje.seguimiento != null) navigator.geolocation.clearWatch(viaje.seguimiento);
-    clearInterval(viaje.reloj); clearInterval(viaje.relojDemo);
+    clearInterval(viaje.reloj); clearInterval(viaje.relojDemo); clearInterval(viaje.relojBanner);
+    $("bannerCaja").hidden = true;
     if (viaje.bloqueo) { try { viaje.bloqueo.release(); } catch (e) {} }
   }
   if (window.speechSynthesis) speechSynthesis.cancel();
@@ -1074,6 +1153,7 @@ $("atajosCerca").replaceChildren(...ATAJOS_CERCA.map(([nombre, texto]) => {
   return b;
 }));
 $("buscarCerca").addEventListener("click", () => { const t = $("textoCerca").value.trim(); if (t) buscarLugaresCerca(t); });
+iniciarFirebase();
 dibujarInterruptores();
 dibujarSugerencias();
 dibujarMusica();
