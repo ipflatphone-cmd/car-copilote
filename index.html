@@ -182,6 +182,7 @@ footer a, .ayuda a { color: var(--azul); }
       <button id="conectarAgenda" type="button">Conectar agenda de Google</button>
       <p class="ayuda" id="avisoAgenda">Solo lee tus citas de las próximas 24 horas. Google puede pedirte aprobarlo de nuevo cada tanto.</p>
       <div class="bloque" id="listaAgenda"></div>
+      <button class="discreto" id="desconectarAgenda" type="button" hidden>Desconectar agenda</button>
     </div>
   </details>
 
@@ -197,6 +198,11 @@ footer a, .ayuda a { color: var(--azul); }
     <div class="bloque" id="resultadosCerca"></div>
     </div>
   </details>
+
+  <div class="bloque" id="bloqueInstalar">
+    <button class="discreto" id="instalarApp" type="button">Instalar Copi como aplicación</button>
+    <p class="ayuda" id="instalarAyuda" hidden></p>
+  </div>
 </section>
 
 <section id="pantallaViaje" class="pantalla" hidden>
@@ -338,7 +344,7 @@ function quitar(k) { try { localStorage.removeItem(k); } catch (e) {} programarS
 
 /* ---------- Perfil de cada usuario: se copia a su cuenta para tenerlo en otro teléfono ---------- */
 const CLAVES_PERFIL = ["nombre_usuario", "voz_tipo", "voz_nombre_mujer", "voz_nombre_hombre", "voz_nombre_mayordomo",
-  "voz_cortes", "voz_radares", "voz_velocidad", "voz_trafico", "lugares", "no_favoritos", "bienvenida_hecha", "copiloto_ia"];
+  "voz_cortes", "voz_radares", "voz_velocidad", "voz_trafico", "lugares", "no_favoritos", "bienvenida_hecha", "copiloto_ia", "agenda_conectada"];
 let usuario = null, autenticacion = null, relojSubida = null, aplicandoPerfil = false;
 function programarSubida(k) {
   if (!usuario || aplicandoPerfil || !CLAVES_PERFIL.includes(k)) return;
@@ -366,6 +372,7 @@ function borrarPerfilLocal() {
   aplicandoPerfil = true;
   CLAVES_PERFIL.forEach(quitar);
   quitar("agenda_citas");
+  quitar("agenda_pase");
   aplicandoPerfil = false;
 }
 async function alCambiarCuenta(u) {
@@ -377,6 +384,7 @@ async function alCambiarCuenta(u) {
       else await subirPerfil();
     } catch (e) {}
     if (!$("pantallaBienvenida").hidden) terminarBienvenida();
+    iniciarAgenda();
   }
   refrescarPerfil();
 }
@@ -442,6 +450,7 @@ function saludoDelDia() {
 function refrescarPerfil() {
   $("saludo").textContent = saludoDelDia();
   dibujarIa();
+  dibujarEstadoAgenda();
   if (document.activeElement !== $("nombreUsuario")) $("nombreUsuario").value = leer("nombre_usuario") || "";
   $("cuentaEstado").textContent = usuario
     ? "Ingresaste como " + (usuario.email || "tu cuenta de Google") + ". Tu configuración se guarda en tu cuenta."
@@ -847,22 +856,66 @@ async function buscarLugaresCerca(texto) {
 
 /* ---------- Agenda de Google: el permiso dura poco y queda solo en memoria ---------- */
 const GOOGLE_CLIENT_ID = "345979697228-40jsaarke9ku8ogeg7s63r7ji4652r6t.apps.googleusercontent.com";
-function conectarAgenda() {
+/* El permiso de Google dura una hora: se guarda en el teléfono y se renueva al tocar Empezar. */
+function paseAgenda() {
+  try {
+    const p = JSON.parse(leer("agenda_pase") || "null");
+    return p && p.vence > Date.now() ? p.token : null;
+  } catch (e) { return null; }
+}
+function dibujarEstadoAgenda() {
+  const conectada = leer("agenda_conectada") === "si";
+  $("conectarAgenda").textContent = conectada ? "Actualizar mi agenda" : "Conectar agenda de Google";
+  $("desconectarAgenda").hidden = !conectada;
+}
+function conectarAgenda(silencioso) {
   const aviso = $("avisoAgenda");
   if (!window.google || !google.accounts || !google.accounts.oauth2) {
-    aviso.textContent = "No se pudo cargar Google. Revisá la conexión y recargá la página.";
+    if (!silencioso) aviso.textContent = "No se pudo cargar Google. Revisá la conexión y recargá la página.";
     return;
   }
+  const noSeRenovo = "No se pudo renovar el permiso de la agenda. Tocá «Actualizar mi agenda» cuando estés estacionado.";
   const cliente = google.accounts.oauth2.initTokenClient({
     client_id: configCopi.googleClientId || GOOGLE_CLIENT_ID,
     scope: "https://www.googleapis.com/auth/calendar.readonly",
     callback: r => {
-      if (r.error || !r.access_token) { aviso.textContent = "Google no dio el permiso. Podés volver a intentarlo."; return; }
+      if (r.error || !r.access_token) { aviso.textContent = silencioso ? noSeRenovo : "Google no dio el permiso. Podés volver a intentarlo."; return; }
+      guardar("agenda_pase", JSON.stringify({ token: r.access_token, vence: Date.now() + ((r.expires_in || 3600) - 60) * 1000 }));
+      guardar("agenda_conectada", "si");
+      dibujarEstadoAgenda();
       leerAgenda(r.access_token);
     },
-    error_callback: () => { aviso.textContent = "Se cerró la ventana de Google. Tocá de nuevo para conectar."; }
+    error_callback: () => { aviso.textContent = silencioso ? noSeRenovo : "Se cerró la ventana de Google. Tocá de nuevo para conectar."; }
   });
-  cliente.requestAccessToken();
+  const opciones = {};
+  if (leer("agenda_conectada") === "si") {
+    opciones.prompt = "";
+    if (usuario && usuario.email) opciones.login_hint = usuario.email;
+  }
+  cliente.requestAccessToken(opciones);
+}
+function renovarAgenda() {
+  if (leer("agenda_conectada") !== "si") return;
+  const pase = paseAgenda();
+  if (pase) leerAgenda(pase);
+  else conectarAgenda(true);
+}
+function desconectarAgenda() {
+  const pase = paseAgenda();
+  if (pase && window.google && google.accounts && google.accounts.oauth2) google.accounts.oauth2.revoke(pase, () => {});
+  quitar("agenda_pase"); quitar("agenda_citas"); quitar("agenda_conectada");
+  $("listaAgenda").replaceChildren();
+  $("avisoAgenda").textContent = "Agenda desconectada. Copi ya no lee tus citas.";
+  dibujarEstadoAgenda();
+}
+/* Al abrir: lo último leído se ve enseguida y, si el permiso sigue vigente, se actualiza. */
+function iniciarAgenda() {
+  dibujarEstadoAgenda();
+  if (leer("agenda_conectada") !== "si") return;
+  const citas = citasGuardadas();
+  if (citas.length) dibujarAgenda(citas.map(c => ({ start: { dateTime: c.inicio }, summary: c.titulo, location: c.lugar })));
+  const pase = paseAgenda();
+  if (pase) leerAgenda(pase);
 }
 async function leerAgenda(token) {
   const aviso = $("avisoAgenda"), ahora = new Date();
@@ -872,6 +925,7 @@ async function leerAgenda(token) {
     const u = "https://www.googleapis.com/calendar/v3/calendars/primary/events?singleEvents=true&orderBy=startTime&maxResults=6" +
       "&timeMin=" + encodeURIComponent(ahora.toISOString()) + "&timeMax=" + encodeURIComponent(hasta.toISOString());
     const r = await fetch(u, { headers: { Authorization: "Bearer " + token } });
+    if (r.status === 401) quitar("agenda_pase");
     if (!r.ok) throw new Error("codigo " + r.status);
     const j = await r.json();
     dibujarAgenda((j.items || []).filter(e => e.start && e.start.dateTime));
@@ -880,7 +934,7 @@ async function leerAgenda(token) {
   }
 }
 function dibujarAgenda(citas) {
-  guardar("agenda_citas", JSON.stringify(citas.map(c => ({ inicio: c.start.dateTime, titulo: c.summary || "Cita" }))));
+  guardar("agenda_citas", JSON.stringify(citas.map(c => ({ inicio: c.start.dateTime, titulo: c.summary || "Cita", lugar: c.location || "" }))));
   $("avisoAgenda").textContent = citas.length ? "Tocá una cita con dirección para salir hacia ahí." : "No tenés citas con horario en las próximas 24 horas.";
   $("listaAgenda").replaceChildren(...citas.map(c => {
     const inicio = new Date(c.start.dateTime), titulo = c.summary || "Cita";
@@ -891,6 +945,23 @@ function dibujarAgenda(citas) {
     else b.disabled = true;
     return b;
   }));
+}
+
+/* ---------- Instalar como aplicación ---------- */
+let pedidoInstalar = null;
+const enApp = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+async function instalarApp() {
+  if (pedidoInstalar) {
+    pedidoInstalar.prompt();
+    await pedidoInstalar.userChoice;
+    pedidoInstalar = null;
+    return;
+  }
+  const iphone = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  $("instalarAyuda").textContent = iphone
+    ? "En el iPhone se hace a mano: tocá el botón Compartir del navegador y elegí «Agregar a pantalla de inicio». La aplicación empieza de cero: abrila e ingresá con tu cuenta una vez."
+    : "Abrí el menú del navegador y elegí «Instalar aplicación» o «Agregar a la pantalla principal».";
+  $("instalarAyuda").hidden = false;
 }
 
 /* ---------- Copiloto con IA: un comentario por viaje, armado en el servidor ---------- */
@@ -1089,6 +1160,8 @@ function radaresDeLaZona() {
 
 async function empezar(demo, atento, lugar) {
   $("errorInicio").hidden = true;
+  // Google solo abre su ventana desde un toque: por eso se renueva antes de cualquier espera.
+  if (!demo) renovarAgenda();
   if (!demo && !claveFija()) {
     await Promise.race([configLista, new Promise(r => setTimeout(r, 3000))]);
     if (!claveFija()) return error("Copi todavía no tiene la clave de tráfico. Hay que cargarla en el administrador.");
@@ -1489,7 +1562,15 @@ function iniciarDemo() {
 }
 
 /* ---------- Botones ---------- */
-$("conectarAgenda").addEventListener("click", conectarAgenda);
+$("conectarAgenda").addEventListener("click", () => {
+  const pase = paseAgenda();
+  if (pase) leerAgenda(pase); else conectarAgenda(false);
+});
+$("desconectarAgenda").addEventListener("click", desconectarAgenda);
+$("instalarApp").addEventListener("click", instalarApp);
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); pedidoInstalar = e; });
+window.addEventListener("appinstalled", () => { $("bloqueInstalar").hidden = true; });
+$("bloqueInstalar").hidden = enApp();
 $("vozLista").addEventListener("change", e => {
   guardar("voz_nombre_" + tipoVoz(), e.target.value); elegirVoz();
   if (window.speechSynthesis) speechSynthesis.cancel();
@@ -1530,6 +1611,7 @@ $("bienvenidaSeguir1").addEventListener("click", () => {
 $("bienvenidaSeguir2").addEventListener("click", () => { pasoBienvenida = 3; dibujarBienvenida(); });
 $("bienvenidaGoogle").addEventListener("click", () => ingresarConGoogle($("bienvenidaError")));
 $("bienvenidaSinCuenta").addEventListener("click", terminarBienvenida);
+iniciarAgenda();
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && relojSubida) subirPerfil(); });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible" || !viaje) return;
