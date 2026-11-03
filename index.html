@@ -219,9 +219,12 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
 "use strict";
 const $ = id => document.getElementById(id);
 
-const MINUTOS_EN_MOVIMIENTO = 3;
+const MINUTOS_EN_MOVIMIENTO = 5;
 const MINUTOS_DETENIDO = 15;
-const TOPE_CONSULTAS_MES = 1500;   // TomTom da 2.500 gratis por mes y la prueba de la PC usa parte
+const TOPE_CONSULTAS_MES = 1500;   // entre todos los teléfonos: TomTom da 2.500 gratis por mes y la prueba de la PC usa parte
+const TAMANO_ZONA = 0.5;           // grados: unos 50 km de lado
+const MINUTOS_ZONA_VIGENTE = 10;   // mientras tanto, los teléfonos de esa zona no vuelven a preguntarle a TomTom
+const MAXIMO_ZONAS = 6;
 const TOLERANCIA_VELOCIDAD = 1.1;  // la ley da un 10 % de margen
 const RADIO_SIN_DESTINO_KM = 8;
 const CERCA_DE_LA_RUTA_M = 250;
@@ -392,19 +395,13 @@ function decir(frase, tipo) {
 
 /* ---------- TomTom ---------- */
 class ErrorClave extends Error {}
+class ErrorCupo extends Error {}
 async function pedir(url) {
   const r = await fetch(url);
   if (r.status === 401 || r.status === 403) throw new ErrorClave();
+  if (r.status === 429) throw new ErrorCupo();
   if (!r.ok) throw new Error("codigo " + r.status);
   return r.json();
-}
-function contarConsulta() {
-  const mes = new Date().toISOString().slice(0, 7);
-  const n = (leer("consultas_mes") === mes ? Number(leer("consultas_n")) || 0 : 0) + 1;
-  guardar("consultas_mes", mes); guardar("consultas_n", String(n));
-}
-function consultasDelMes() {
-  return leer("consultas_mes") === new Date().toISOString().slice(0, 7) ? Number(leer("consultas_n")) || 0 : 0;
 }
 /* Las claves se cargan desde el administrador; el último valor queda guardado para arrancar sin esperar. */
 let configCopi = {};
@@ -687,16 +684,67 @@ async function calcularRuta(pos, dest) {
     puntos: r.legs.flatMap(l => l.points).map(p => ({ lat: p.latitude, lon: p.longitude }))
   };
 }
-function cajaDe(puntos, margenGrados) {
-  const lats = puntos.map(p => p.lat), lons = puntos.map(p => p.lon);
-  return [Math.min(...lons) - margenGrados, Math.min(...lats) - margenGrados, Math.max(...lons) + margenGrados, Math.max(...lats) + margenGrados];
+/* ---------- Consultas compartidas: cada zona se le pide a TomTom una vez cada unos minutos, entre todos ---------- */
+function zonaDePunto(p) {
+  return { lat: Math.floor(p.lat / TAMANO_ZONA) * TAMANO_ZONA, lon: Math.floor(p.lon / TAMANO_ZONA) * TAMANO_ZONA };
 }
-async function pedirIncidentes(caja) {
+const idDeZona = z => z.lat.toFixed(1) + "_" + z.lon.toFixed(1);
+/* Las zonas por las que pasa lo que falta del camino, en orden; sin destino, las que rodean al auto. */
+function zonasNecesarias(pos, ruta, desde) {
+  const margen = RADIO_SIN_DESTINO_KM / 111;
+  const puntos = ruta ? ruta.slice(desde) : [-1, 1].flatMap(a => [-1, 1].map(b => ({ lat: pos.lat + a * margen, lon: pos.lon + b * margen })));
+  const zonas = new Map();
+  for (const p of [pos, ...puntos]) { const z = zonaDePunto(p); zonas.set(idDeZona(z), z); }
+  return [...zonas.entries()].slice(0, MAXIMO_ZONAS);
+}
+/* Guarda solo lo necesario de cada incidente, para que la zona ocupe poco. */
+function incidenteCompacto(i) {
+  const p = i.properties || {}, c = puntosDe(i.geometry), paso = Math.max(1, Math.ceil(c.length / 8));
+  const muestra = c.filter((_, n) => n % paso === 0 || n === c.length - 1);
+  return { i: String(p.id || ""), c: p.iconCategory || 0, f: p.from || "", t: p.to || "", d: p.delay || 0, m: p.magnitudeOfDelay || 0,
+           r: (p.roadNumbers || []).length, p: muestra.flatMap(x => [x.lat, x.lon]) };
+}
+function incidenteExpandido(z) {
+  const c = [];
+  for (let n = 0; n < z.p.length; n += 2) c.push([z.p[n + 1], z.p[n]]);
+  return { geometry: { type: "LineString", coordinates: c },
+           properties: { id: z.i, iconCategory: z.c, from: z.f, to: z.t, delay: z.d, magnitudeOfDelay: z.m, roadNumbers: new Array(z.r).fill("ruta") } };
+}
+const mesActual = () => fechaHoy().slice(0, 7);
+async function pedirZonaATomTom(z) {
+  const caja = [z.lon, z.lat, z.lon + TAMANO_ZONA, z.lat + TAMANO_ZONA];
   const u = "https://api.tomtom.com/traffic/services/5/incidentDetails?bbox=" + caja.map(n => n.toFixed(5)).join(",") +
     "&fields=" + encodeURIComponent(CAMPOS) + "&language=es-ES&timeValidityFilter=present&key=" + clave();
   const j = await pedir(u);
-  contarConsulta();
-  return j.incidents || [];
+  return (j.incidents || []).filter(i => TIPOS[(i.properties || {}).iconCategory]).map(incidenteCompacto);
+}
+async function incidentesDeZona(id, z) {
+  if (!baseDatos) return pedirZonaATomTom(z);
+  const ref = baseDatos.collection("zonas").doc(id);
+  let guardada = null;
+  try { guardada = await ref.get(); } catch (e) { return pedirZonaATomTom(z); }
+  const datos = guardada.exists ? guardada.data() : null;
+  const hora = datos && datos.actualizado ? datos.actualizado.toMillis() : 0;
+  if (datos && Date.now() - hora < MINUTOS_ZONA_VIGENTE * 60000) return datos.incidentes || [];
+  // Hay que preguntarle a TomTom: antes se mira cuánto se consumió este mes entre todos.
+  const cupo = baseDatos.collection("cupo").doc(mesActual());
+  let usadas = 0;
+  try { const c = await cupo.get(); usadas = c.exists ? c.data().incidentes || 0 : 0; } catch (e) {}
+  if (usadas >= TOPE_CONSULTAS_MES) throw new ErrorCupo();
+  const incidentes = await pedirZonaATomTom(z);
+  if (!esPrueba) {
+    const valor = firebase.firestore.FieldValue;
+    ref.set({ actualizado: valor.serverTimestamp(), incidentes: incidentes.slice(0, 1000) }).catch(() => {});
+    cupo.set({ incidentes: valor.increment(1) }, { merge: true }).catch(() => {});
+  }
+  return incidentes;
+}
+async function pedirIncidentes(pos, ruta, desde) {
+  const zonas = zonasNecesarias(pos, ruta, desde);
+  const listas = await Promise.all(zonas.map(([id, z]) => incidentesDeZona(id, z)));
+  const vistos = new Map();
+  for (const lista of listas) for (const i of lista) vistos.set(i.i || JSON.stringify(i.p), i);
+  return [...vistos.values()].map(incidenteExpandido);
 }
 
 /* ---------- Viaje ---------- */
@@ -794,6 +842,7 @@ async function iniciarReal(lugar) {
   if (viaje.atento) preguntarDestino();
   sumar("viajes");
   cargarBannersActivos();
+  viaje.ultimaLectura = { lat: viaje.pos.lat, lon: viaje.pos.lon, t: Date.now() };
   viaje.relojBanner = setInterval(revisarBanner, 3000);
   mantenerPantalla();
   viaje.seguimiento = navigator.geolocation.watchPosition(alMoverse, () => estado("Sin señal de GPS"), { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
@@ -814,10 +863,23 @@ function latido() {
   if (Date.now() - viaje.ultimaConsulta >= minutos * 60000) consultar();
 }
 
+/* Quieto, el iPhone suele no informar velocidad: entonces se calcula por cuánto se movió. */
+function velocidadDe(p) {
+  const v = p.coords.speed, aqui = { lat: p.coords.latitude, lon: p.coords.longitude }, ahora = Date.now(), antes = viaje.ultimaLectura;
+  if (v != null && !isNaN(v) && v >= 0) { viaje.ultimaLectura = { ...aqui, t: ahora }; return v * 3.6; }
+  if (!antes) { viaje.ultimaLectura = { ...aqui, t: ahora }; return null; }
+  const m = metros(antes, aqui), segundos = (ahora - antes.t) / 1000;
+  // Con lecturas muy seguidas el cálculo se dispara: se espera a tener un tramo más largo.
+  if (m >= 15 && segundos < 3) return viaje.pos ? viaje.pos.vel : null;
+  viaje.ultimaLectura = { ...aqui, t: ahora };
+  if (m < 15) return 0;
+  const kmh = (m / segundos) * 3.6;
+  return kmh > 220 ? null : kmh;
+}
 function alMoverse(p) {
   const v = p.coords.speed;
   const nuevo = { lat: p.coords.latitude, lon: p.coords.longitude,
-    vel: v != null && !isNaN(v) && v >= 0 ? v * 3.6 : null,
+    vel: velocidadDe(p),
     rumbo: p.coords.heading != null && !isNaN(p.coords.heading) && p.coords.speed > 1 ? p.coords.heading : (viaje.pos ? viaje.pos.rumbo : null) };
   moverA(nuevo);
 }
@@ -850,7 +912,7 @@ function limiteActual() {
 }
 async function actualizarLimiteVia() {
   if (viaje.demo || viaje.zona || viaje.pidiendoLimite || viaje.pos.vel == null || viaje.pos.vel < 20) return;
-  if (Date.now() - viaje.ultimoLimite < 60000) return;
+  if (Date.now() - viaje.ultimoLimite < 120000) return;
   const v = viaje;
   v.pidiendoLimite = true; v.ultimoLimite = Date.now();
   try { v.limiteVia = await pedirLimiteDeCalle(v.pos); }
@@ -871,11 +933,6 @@ function revisarVelocidad() {
 
 async function consultar() {
   if (!viaje || viaje.consultando || !viaje.pos) return;
-  if (consultasDelMes() >= TOPE_CONSULTAS_MES) {
-    if (!viaje.topeAvisado) { viaje.topeAvisado = true; decir("Llegué al tope de consultas de tráfico de este mes. Sigo avisando radares."); }
-    estado("Tope de consultas de tráfico del mes alcanzado: los radares siguen andando.");
-    return;
-  }
   viaje.consultando = true;
   viaje.ultimaConsulta = Date.now();
   viaje.posUltimaConsulta = viaje.pos;
@@ -885,11 +942,14 @@ async function consultar() {
       viaje.ruta = r.puntos; viaje.tramo = 0;
       actualizarLlegada(r.segundos, r.demora);
     }
-    const caja = viaje.ruta ? cajaDe(viaje.ruta, 0.01) : cajaDe([viaje.pos], RADIO_SIN_DESTINO_KM / 111);
-    aplicarIncidentes(await pedirIncidentes(caja));
-    estado("Actualizado a las " + hora(new Date()) + ". Consultas de este mes en este teléfono: " + consultasDelMes() + ".");
+    aplicarIncidentes(await pedirIncidentes(viaje.pos, viaje.ruta, viaje.tramo));
+    estado("Actualizado a las " + hora(new Date()) + ".");
   } catch (e) {
-    if (e instanceof ErrorClave) estado("TomTom rechazó la clave.");
+    if (e instanceof ErrorCupo) {
+      if (!viaje.topeAvisado) { viaje.topeAvisado = true; decir("Se terminó el cupo de tráfico de este mes. Sigo avisando los radares."); }
+      estado("Se terminó el cupo gratis de tráfico de este mes: los avisos de tráfico vuelven el mes que viene. Los radares siguen andando.");
+    }
+    else if (e instanceof ErrorClave) estado("TomTom rechazó la clave.");
     else estado("Sin conexión con TomTom a las " + hora(new Date()) + ". Vuelvo a intentar en unos minutos.");
   } finally {
     if (viaje) viaje.consultando = false;
@@ -1007,7 +1067,7 @@ function dibujar() {
 function estado(t) { $("estado").textContent = t; }
 
 /* ---------- Firebase: banners y contadores anónimos. Si falla, Copi sigue andando igual ---------- */
-const SEGUNDOS_PARA_BANNER = 15, SEGUNDOS_POR_BANNER = 20, VELOCIDAD_DETENIDO = 3;
+const SEGUNDOS_PARA_BANNER = 15, SEGUNDOS_POR_BANNER = 20, VELOCIDAD_DETENIDO = 3, SEGUNDOS_SIN_GPS = 20, DISTANCIA_AVISO_PRIORITARIO_M = 1500;
 const BANNER_EJEMPLO = { titulo: "Ejemplo", imagen: "data:image/svg+xml," + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1000"><rect width="1200" height="1000" fill="#1D54C2"/><text x="600" y="430" fill="#fff" font-family="sans-serif" font-size="130" font-weight="700" text-anchor="middle">Tu banner acá</text><text x="600" y="590" fill="#fff" font-family="sans-serif" font-size="70" text-anchor="middle">Ejemplo de 1200 × 1000</text></svg>') };
 let baseDatos = null, banners = [], configLista = Promise.resolve();
@@ -1054,13 +1114,15 @@ function cargarBannersActivos() {
 function bannersVigentes() { return viaje && viaje.demo ? [BANNER_EJEMPLO] : banners; }
 function puedeVerBanner() {
   if (!viaje || !bannersVigentes().length || viaje.radarActivo) return false;
-  if (!$("preguntaDestino").hidden || !$("preguntaFavorito").hidden) return false;
-  if (viaje.incidentes.some(i => i.nivel === "alto")) return false;
+  // Un problema grave muy cerca sigue teniendo prioridad; uno lejano no tapa el banner.
+  if (viaje.incidentes.some(i => i.nivel === "alto" && metros(viaje.pos, i.punto) < DISTANCIA_AVISO_PRIORITARIO_M)) return false;
   return !!viaje.detenidoDesde && Date.now() - viaje.detenidoDesde >= SEGUNDOS_PARA_BANNER * 1000;
 }
 function revisarBanner() {
   if (!viaje) return;
-  const v = viaje.pos && viaje.pos.vel;
+  // Sin lecturas nuevas del GPS por un rato, el auto está quieto: en movimiento llegan seguido.
+  const sinNovedad = viaje.ultimaLectura && Date.now() - viaje.ultimaLectura.t > SEGUNDOS_SIN_GPS * 1000;
+  const v = sinNovedad ? 0 : viaje.pos && viaje.pos.vel;
   if (v == null || v >= VELOCIDAD_DETENIDO) viaje.detenidoDesde = null;
   else if (!viaje.detenidoDesde) viaje.detenidoDesde = Date.now();
   const caja = $("bannerCaja"), mostrar = puedeVerBanner(), estabaOculta = caja.hidden;

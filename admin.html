@@ -87,6 +87,7 @@ td:not(:first-child), th:not(:first-child) { text-align: right; }
         <div class="numero"><strong id="nHoy">–</strong><span>Teléfonos activos hoy</span></div>
         <div class="numero"><strong id="nViajes">–</strong><span>Viajes en 7 días</span></div>
         <div class="numero"><strong id="nAperturas">–</strong><span>Aperturas en 7 días</span></div>
+        <div class="numero"><strong id="nCupo">–</strong><span>Consultas de tráfico este mes, de 1.500</span></div>
       </div>
       <div class="tabla"><table>
         <thead><tr><th scope="col">Día</th><th scope="col">Aperturas</th><th scope="col">Viajes</th></tr></thead>
@@ -243,6 +244,8 @@ async function cargarUso() {
     return tr;
   }));
   $("nViajes").textContent = viajes; $("nAperturas").textContent = aperturas;
+  const cupo = await db.collection("cupo").doc(fechaISO(hoy).slice(0, 7)).get();
+  $("nCupo").textContent = cupo.exists ? cupo.data().incidentes || 0 : 0;
 }
 
 async function cargarClaves() {
