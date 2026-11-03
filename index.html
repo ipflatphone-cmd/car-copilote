@@ -255,6 +255,7 @@ footer a, .ayuda a { color: var(--azul); }
     <button id="repetir" type="button">Repetir aviso</button>
     <a class="boton" id="abrirWaze" href="https://waze.com/ul" target="_blank" rel="noopener">Abrir Waze</a>
   </div>
+  <button class="peligro" id="reportar" type="button">Reportar accidente acá</button>
   <button id="terminar" type="button">Terminar viaje</button>
   <p id="estado" role="status"></p>
 </section>
@@ -445,6 +446,7 @@ async function borrarMisDatos() {
   try {
     clearTimeout(relojSubida);
     if (usuario && baseDatos) {
+      await baseDatos.collection("limite_reportes").doc(usuario.uid).delete().catch(() => {});
       await baseDatos.collection("usuarios").doc(usuario.uid).delete();
       await usuario.delete();
     }
@@ -1142,7 +1144,7 @@ async function pedirIncidentes(pos, ruta, desde) {
 let viaje = null;
 function viajeNuevo(demo, atento) {
   return { demo, atento, pos: null, dest: null, limite: null, ruta: null, tramo: 0, incidentes: [], avisados: new Set(), radares: [],
-           peajes: [], peajeActivo: null, recordados: new Set(), contados: new Map(), radarPasando: null,
+           trafico: [], reportes: [], ultimaLecturaReportes: 0, peajes: [], peajeActivo: null, recordados: new Set(), contados: new Map(), radarPasando: null,
            seguimiento: null, reloj: null, relojDemo: null, bloqueo: null, ultimoEstadoLlegada: null, consultando: false,
            ultimaConsulta: 0, posUltimaConsulta: null, ultimaDemora: null, topeAvisado: false,
            limiteVia: null, ultimoLimite: 0, pidiendoLimite: false, lecturasExceso: 0, ultimoAvisoExceso: 0 };
@@ -1245,7 +1247,8 @@ async function iniciarReal(lugar) {
   viaje.relojBanner = setInterval(revisarBanner, 3000);
   mantenerPantalla();
   viaje.seguimiento = navigator.geolocation.watchPosition(alMoverse, () => estado("Sin señal de GPS"), { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
-  await consultar();
+  limpiarReportesViejos();
+  await Promise.all([cargarReportes(), consultar()]);
   comentarioIa();
   viaje.reloj = setInterval(latido, 30000);
 }
@@ -1259,6 +1262,7 @@ function detenido() {
 function latido() {
   if (!viaje || !viaje.pos) return;
   revisarParada();
+  if (Date.now() - viaje.ultimaLecturaReportes >= MINUTOS_ENTRE_LECTURAS * 60000) cargarReportes();
   const minutos = detenido() ? MINUTOS_DETENIDO : MINUTOS_EN_MOVIMIENTO;
   if (Date.now() - viaje.ultimaConsulta >= minutos * 60000) consultar();
 }
@@ -1345,7 +1349,8 @@ async function consultar() {
       viaje.ruta = r.puntos; viaje.tramo = 0;
       actualizarLlegada(r.segundos, r.demora);
     }
-    aplicarIncidentes(await pedirIncidentes(viaje.pos, viaje.ruta, viaje.tramo));
+    viaje.trafico = await pedirIncidentes(viaje.pos, viaje.ruta, viaje.tramo);
+    aplicarTodo();
     estado("Actualizado a las " + hora(new Date()) + ".");
   } catch (e) {
     if (e instanceof ErrorCupo) {
@@ -1357,6 +1362,79 @@ async function consultar() {
   } finally {
     if (viaje) viaje.consultando = false;
   }
+}
+
+/* ---------- Accidentes reportados por usuarios: lo que TomTom no informa en Argentina ---------- */
+const MINUTOS_REPORTE_VIGENTE = 45, MINUTOS_ENTRE_LECTURAS = 2, SEGUNDOS_PARA_CANCELAR = 5, MISMO_REPORTE_M = 300;
+const TEXTO_BOTON_REPORTE = "Reportar accidente acá";
+function aplicarTodo() { aplicarIncidentes([...viaje.trafico, ...viaje.reportes]); }
+async function cargarReportes() {
+  if (!baseDatos || !viaje || viaje.demo) return;
+  const v = viaje;
+  v.ultimaLecturaReportes = Date.now();
+  try {
+    const r = await baseDatos.collection("reportes").where("creado", ">", new Date(Date.now() - MINUTOS_REPORTE_VIGENTE * 60000)).limit(100).get();
+    v.reportes = r.docs.filter(d => d.data().creado).map(d => {
+      const x = d.data();
+      return { geometry: { type: "Point", coordinates: [x.lon, x.lat] },
+               properties: { id: "rep" + d.id, iconCategory: 1, from: "", to: "", delay: 0, roadNumbers: [], reportado: x.creado.toMillis() } };
+    });
+    if (viaje === v && v.pos) aplicarTodo();
+  } catch (e) {}
+}
+/* Lo vencido no se vuelve a mostrar y lo borra el primero que arranca un viaje. */
+function limpiarReportesViejos() {
+  if (!baseDatos) return;
+  baseDatos.collection("reportes").where("creado", "<", new Date(Date.now() - MINUTOS_REPORTE_VIGENTE * 60000)).limit(20).get()
+    .then(r => r.docs.forEach(d => d.ref.delete().catch(() => {}))).catch(() => {});
+}
+function hayReporteCerca(pos) {
+  return viaje.reportes.some(r => metros(pos, puntosDe(r.geometry)[0]) < MISMO_REPORTE_M);
+}
+function restaurarBotonReporte() {
+  clearTimeout(envioReporte); envioReporte = null;
+  $("reportar").textContent = TEXTO_BOTON_REPORTE;
+}
+let envioReporte = null;
+/* Cinco segundos para cancelar un toque sin querer: la posición es la del momento del toque. */
+function tocarReporte() {
+  if (!viaje) return;
+  if (envioReporte) { restaurarBotonReporte(); estado("Reporte cancelado."); return; }
+  if (viaje.demo) { estado("En la demostración no se envía nada."); return; }
+  if (!usuario) { estado("Para reportar hay que ingresar con Google, en Ajustes."); decir("Para reportar hay que ingresar con Google, en Ajustes."); return; }
+  if (!viaje.pos) { estado("Todavía no tengo tu ubicación."); return; }
+  if (hayReporteCerca(viaje.pos)) { estado("Ese accidente ya está reportado."); decir("Ya está reportado."); return; }
+  const lugar = { lat: viaje.pos.lat, lon: viaje.pos.lon };
+  $("reportar").textContent = "Enviando... tocá para cancelar";
+  envioReporte = setTimeout(() => enviarReporte(lugar), SEGUNDOS_PARA_CANCELAR * 1000);
+}
+async function enviarReporte(lugar) {
+  restaurarBotonReporte();
+  if (!viaje || !usuario || !baseDatos) return;
+  const v = viaje, momento = firebase.firestore.FieldValue.serverTimestamp();
+  const ref = baseDatos.collection("reportes").doc();
+  const lote = baseDatos.batch();
+  lote.set(ref, { lat: lugar.lat, lon: lugar.lon, creado: momento });
+  lote.set(baseDatos.collection("limite_reportes").doc(usuario.uid), { ultimo: momento });
+  // A quien reporta no se le repite su propio aviso.
+  v.avisados.add("rep" + ref.id); v.recordados.add("rep" + ref.id);
+  try {
+    await lote.commit();
+    estado("Reporte enviado. Les avisa a los demás durante " + MINUTOS_REPORTE_VIGENTE + " minutos.");
+    decir("Listo, reporte enviado.");
+    cargarReportes();
+  } catch (e) {
+    const limite = e && e.code === "permission-denied";
+    estado(limite ? "Ya enviaste un reporte hace poco: se puede uno cada 5 minutos." : "No se pudo enviar el reporte. Revisá la conexión.");
+    decir(limite ? "Ya enviaste un reporte hace poco." : "No se pudo enviar el reporte.");
+  }
+}
+function textoDetalle(i) {
+  if (i.reportado) {
+    const min = Math.max(1, Math.round((Date.now() - i.reportado) / 60000));
+    return "Reportado por un usuario de Copi hace " + min + " min";
+  }
+  return i.calle + (i.hacia ? " hacia " + i.hacia : "");
 }
 
 function aplicarIncidentes(lista) {
@@ -1372,12 +1450,12 @@ function aplicarIncidentes(lista) {
     }
     if (!importa(p, puntos[0], viaje)) continue;
     const tipo = TIPOS[p.iconCategory];
-    viaje.incidentes.push({ id: p.id, punto: puntos[0], tipo: tipo[0], nivel: tipo[1], calle: p.from || "", hacia: p.to || "", demora: p.delay || 0,
+    viaje.incidentes.push({ id: p.id, punto: puntos[0], tipo: p.reportado ? "Accidente reportado" : tipo[0], nivel: tipo[1], reportado: p.reportado || 0, calle: p.from || "", hacia: p.to || "", demora: p.delay || 0,
                             accidente: p.iconCategory === 1, voz: p.iconCategory === 1 ? "accidentes" : p.iconCategory === 8 ? "cortes" : "trafico" });
   }
   // Cambios: también avisa cuando un problema grave deja de figurar.
   for (const a of anteriores) {
-    if (a.nivel === "alto" && !viaje.incidentes.some(i => i.id === a.id)) {
+    if (a.nivel === "alto" && !a.reportado && !viaje.incidentes.some(i => i.id === a.id)) {
       decir("Ya no figura " + a.tipo.toLowerCase() + (a.calle ? " en " + a.calle : "") + ".", a.voz);
     }
   }
@@ -1404,7 +1482,7 @@ function recordarAccidentes() {
     const d = metros(viaje.pos, i.punto);
     if (d > RECORDAR_ACCIDENTE_M || !adelante(viaje.pos, i.punto, 90)) continue;
     viaje.recordados.add(i.id);
-    decir("Accidente a " + vozDistancia(d) + (i.calle ? ", en " + i.calle : "") + ".", "accidentes");
+    decir(i.tipo + " a " + vozDistancia(d) + (i.calle ? ", en " + i.calle : "") + ".", "accidentes");
   }
 }
 
@@ -1555,7 +1633,7 @@ function dibujar() {
   } else if (hay.length && hay[0].accidente && hay[0].m < RECORDAR_ACCIDENTE_M) {
     aviso.dataset.nivel = hay[0].nivel;
     $("avisoTitulo").textContent = hay[0].tipo + " a " + textoDistancia(hay[0].m);
-    $("avisoDetalle").textContent = hay[0].calle + (hay[0].hacia ? " hacia " + hay[0].hacia : "");
+    $("avisoDetalle").textContent = textoDetalle(hay[0]);
   } else if (viaje.peajeActivo) {
     aviso.dataset.nivel = "medio";
     $("avisoTitulo").textContent = "Peaje a " + textoDistancia(metros(viaje.pos, viaje.peajeActivo));
@@ -1563,7 +1641,7 @@ function dibujar() {
   } else if (hay.length) {
     aviso.dataset.nivel = hay[0].nivel;
     $("avisoTitulo").textContent = hay[0].tipo + " a " + textoDistancia(hay[0].m);
-    $("avisoDetalle").textContent = hay[0].calle + (hay[0].hacia ? " hacia " + hay[0].hacia : "");
+    $("avisoDetalle").textContent = textoDetalle(hay[0]);
   } else {
     aviso.dataset.nivel = "ok";
     $("avisoTitulo").textContent = "Camino libre";
@@ -1677,6 +1755,7 @@ function revisarBanner() {
 }
 
 function terminar() {
+  restaurarBotonReporte();
   if (viaje) {
     if (viaje.seguimiento != null) navigator.geolocation.clearWatch(viaje.seguimiento);
     clearInterval(viaje.reloj); clearInterval(viaje.relojDemo); clearInterval(viaje.relojBanner);
@@ -1747,6 +1826,7 @@ $("empezar").addEventListener("click", () => empezar(false, false));
 $("atento").addEventListener("click", () => empezar(false, true));
 $("demo").addEventListener("click", () => empezar(true, false));
 $("terminar").addEventListener("click", terminar);
+$("reportar").addEventListener("click", tocarReporte);
 $("repetir").addEventListener("click", () => {
   if (!ultimaFrase || !window.speechSynthesis) return;
   const u = new SpeechSynthesisUtterance(ultimaFrase);
@@ -1780,7 +1860,7 @@ document.addEventListener("visibilitychange", () => { if (document.visibilitySta
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible" || !viaje) return;
   mantenerPantalla();
-  if (!viaje.demo) { estado("La página estuvo en pausa: mientras no se ve, no avisa. Actualizando..."); consultar(); }
+  if (!viaje.demo) { estado("La página estuvo en pausa: mientras no se ve, no avisa. Actualizando..."); consultar(); cargarReportes(); }
 });
 
 $("atajosCerca").replaceChildren(...ATAJOS_CERCA.map(([nombre, texto]) => {
