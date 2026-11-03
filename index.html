@@ -5,8 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Copi">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#14181c">
 <meta name="robots" content="noindex">
 <title>Copi</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icono-180.png">
+<link rel="icon" href="icono-192.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 /* Tablero de auto: fondo asfalto, un solo aviso enorme, colores de cartel vial. */
@@ -84,34 +89,79 @@ h2 { font-size: 19px; margin: 0; }
 #preguntaDestino, #preguntaFavorito { padding: 14px; border: 2px solid var(--ambar); border-radius: 12px; }
 #preguntaTitulo, #favoritoTitulo { font-size: 24px; font-weight: 800; }
 button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: var(--suave); }
+button.peligro { color: var(--rojo); }
+.pantalla { display: grid; gap: 18px; }
+.cabecera { display: flex; align-items: center; gap: 12px; }
+.cabecera > div { flex: 1; min-width: 0; }
+.logo { flex: none; width: 46px; height: 46px; display: block; }
+#saludo { font-size: 27px; font-weight: 800; line-height: 1.1; letter-spacing: -.01em; overflow-wrap: anywhere; }
+button.icono { width: 52px; min-height: 52px; flex: none; padding: 0; font-size: 22px; }
+.plegable { border-top: 1px solid var(--linea); padding-top: 12px; }
+.plegable > summary { cursor: pointer; font-size: 19px; font-weight: 700; min-height: 36px; }
+.plegable[open] > summary { margin-bottom: 12px; }
+.plegable > .bloque { margin-top: 4px; }
+.bienvenida { min-height: 70vh; align-content: center; }
+.bienvenida h1 { font-size: 34px; text-wrap: balance; }
+.bienvenida .logo { width: 72px; height: 72px; }
+.pasos { display: flex; gap: 6px; }
+.pasos span { height: 5px; flex: 1; border-radius: 3px; background: var(--linea); }
+.pasos span[data-activo="si"] { background: var(--ambar); }
+footer a, .ayuda a { color: var(--azul); }
 </style>
 </head>
 <body>
 <main>
 
-<section id="pantallaInicio" style="display:grid;gap:16px">
-  <div>
-    <p class="marca">Prototipo de prueba</p>
-    <h1>Copi</h1>
-  </div>
-  <p class="ayuda">Dejá esta página abierta en el teléfono, en el soporte. Waze sigue guiando en la pantalla del auto y esto te avisa por voz. Configurá todo antes de arrancar.</p>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="logoCopi" viewBox="0 0 100 100">
+    <rect width="100" height="100" rx="24" fill="#20262c"/>
+    <path d="M69.8 69.8a28 28 0 1 1 0-39.6" fill="none" stroke="#ffb81c" stroke-width="13" stroke-linecap="round"/>
+    <circle cx="50" cy="50" r="7.5" fill="#f2f4f5"/>
+  </symbol>
+</svg>
 
-  <label id="preguntaNombre">¿Cómo querés que te llame?
-    <input id="nombreUsuario" type="text" maxlength="30" autocomplete="given-name" placeholder="Tu nombre">
-    <span class="ayuda" id="nombreAyuda">Queda guardado solo en este teléfono. Podés cambiarlo cuando quieras.</span>
-  </label>
+<section id="pantallaBienvenida" class="pantalla bienvenida" hidden>
+  <div class="pasos" aria-hidden="true"><span id="paso1"></span><span id="paso2"></span><span id="paso3"></span></div>
+
+  <div class="bloque" id="bienvenidaNombrePaso">
+    <svg class="logo" role="img" aria-label="Copi"><use href="#logoCopi"/></svg>
+    <h1>Hola, soy Copi, tu copiloto</h1>
+    <p class="ayuda">Te aviso por voz del tráfico, los radares y tu agenda, mientras Waze o Maps te guían.</p>
+    <label>¿Cómo querés que te llame?
+      <input id="bienvenidaNombre" type="text" maxlength="30" autocomplete="given-name" placeholder="Tu nombre">
+    </label>
+    <button class="principal" id="bienvenidaSeguir1" type="button">Seguir</button>
+  </div>
+
+  <div class="bloque" id="bienvenidaVozPaso" hidden>
+    <h1>Elegí mi voz</h1>
+    <p class="ayuda">Tocá una para escucharla. Copi es la opción más formal. Podés cambiarla después en Ajustes.</p>
+    <div class="tres" id="bienvenidaVoces"></div>
+    <button class="principal" id="bienvenidaSeguir2" type="button">Seguir</button>
+  </div>
+
+  <div class="bloque" id="bienvenidaCuentaPaso" hidden>
+    <h1>Guardá tu configuración</h1>
+    <p class="ayuda">Con tu cuenta de Google, tu configuración y tus lugares te siguen a otro teléfono. Sin cuenta, quedan solo en este. <a href="privacidad.html" target="_blank" rel="noopener">Cómo cuido tus datos</a>.</p>
+    <button class="principal" id="bienvenidaGoogle" type="button">Ingresar con Google</button>
+    <button id="bienvenidaSinCuenta" type="button">Seguir sin cuenta</button>
+    <p class="error" id="bienvenidaError" role="status" hidden></p>
+  </div>
+</section>
+
+<section id="pantallaInicio" class="pantalla">
+  <header class="cabecera">
+    <svg class="logo" role="img" aria-label="Copi"><use href="#logoCopi"/></svg>
+    <div>
+      <div id="saludo">Hola</div>
+      <p class="ayuda">¿Salimos? Configurá todo antes de arrancar.</p>
+    </div>
+    <button class="icono" id="abrirAjustes" type="button" aria-label="Ajustes">⚙</button>
+  </header>
 
   <div class="bloque" id="sugerencias" hidden>
     <h2>¿Vas a alguno de tus lugares?</h2>
     <div class="bloque" id="listaLugares"></div>
-    <button class="discreto" id="olvidarLugares" type="button">Olvidar mis lugares</button>
-  </div>
-
-  <div class="bloque">
-    <h2>Mi agenda</h2>
-    <button id="conectarAgenda" type="button">Conectar agenda de Google</button>
-    <p class="ayuda" id="avisoAgenda">Solo lee tus citas de las próximas 24 horas. Google puede pedirte aprobarlo de nuevo cada tanto.</p>
-    <div class="bloque" id="listaAgenda"></div>
   </div>
 
   <label>¿A dónde vas? <span class="ayuda">(opcional)</span>
@@ -123,11 +173,21 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
 
   <button class="principal" id="empezar" type="button">Empezar viaje</button>
   <button id="atento" type="button">Modo atento, sin destino</button>
-  <button id="demo" type="button">Ver demostración, sin salir</button>
   <p class="error" id="errorInicio" hidden></p>
+  <p class="ayuda">Dejá esta página abierta y la pantalla prendida: si queda atrás, deja de avisar.</p>
 
-  <div class="bloque">
-    <h2>Buscar cerca de mí</h2>
+  <details class="plegable">
+    <summary>Mi agenda</summary>
+    <div class="bloque">
+      <button id="conectarAgenda" type="button">Conectar agenda de Google</button>
+      <p class="ayuda" id="avisoAgenda">Solo lee tus citas de las próximas 24 horas. Google puede pedirte aprobarlo de nuevo cada tanto.</p>
+      <div class="bloque" id="listaAgenda"></div>
+    </div>
+  </details>
+
+  <details class="plegable">
+    <summary>Buscar cerca de mí</summary>
+    <div class="bloque">
     <div class="tres" id="atajosCerca"></div>
     <label>¿Qué necesitás?
       <input id="textoCerca" type="search" placeholder="Ej.: gomería, cafetería, cajero" autocomplete="off">
@@ -135,11 +195,11 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
     <button id="buscarCerca" type="button">Buscar</button>
     <p class="ayuda" id="avisoCerca">Más cercanos primero. Tocá uno para ir con Waze.</p>
     <div class="bloque" id="resultadosCerca"></div>
-  </div>
-
+    </div>
+  </details>
 </section>
 
-<section id="pantallaViaje" style="display:grid;gap:16px" hidden>
+<section id="pantallaViaje" class="pantalla" hidden>
   <p class="marca" id="marcaDemo" hidden>Demostración: datos inventados</p>
   <div class="bloque" id="preguntaDestino" hidden>
     <div id="preguntaTitulo"></div>
@@ -179,37 +239,68 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
   <p id="estado" role="status"></p>
 </section>
 
-<section class="bloque" aria-label="Música">
-  <h2>Música</h2>
-  <p class="ayuda" id="musicaTexto"></p>
-  <div class="tres">
-    <a class="boton" id="musicaSpotify" target="_blank" rel="noopener">Spotify</a>
-    <a class="boton" id="musicaApple" target="_blank" rel="noopener">Apple Music</a>
-    <a class="boton" id="musicaYoutube" target="_blank" rel="noopener">YouTube Music</a>
+<details class="plegable" id="seccionMusica">
+  <summary>Música</summary>
+  <div class="bloque">
+    <p class="ayuda" id="musicaTexto"></p>
+    <div class="tres">
+      <a class="boton" id="musicaSpotify" target="_blank" rel="noopener">Spotify</a>
+      <a class="boton" id="musicaApple" target="_blank" rel="noopener">Apple Music</a>
+      <a class="boton" id="musicaYoutube" target="_blank" rel="noopener">YouTube Music</a>
+    </div>
+    <p class="ayuda">Hacelo estacionado. Después volvé acá: si esta página queda atrás, deja de avisar.</p>
   </div>
-  <p class="ayuda">Hacelo estacionado. Después volvé acá: si esta página queda atrás, deja de avisar.</p>
-</section>
+</details>
 
-<section class="bloque" aria-label="Voz">
-  <h2>Voz</h2>
-  <div class="tres" id="opcionesVoz"></div>
-  <label for="vozLista" class="ayuda">Voces en español de este teléfono</label>
-  <select id="vozLista" hidden></select>
-  <p class="ayuda" id="vozActual"></p>
-</section>
+<section id="pantallaAjustes" class="pantalla" hidden>
+  <header class="cabecera">
+    <button class="icono" id="cerrarAjustes" type="button" aria-label="Volver">←</button>
+    <div><h1>Ajustes</h1></div>
+  </header>
 
-<section class="bloque" aria-label="Avisos por voz">
-  <h2>Avisos por voz</h2>
-  <div class="fila" id="interruptores"></div>
-  <p class="ayuda">Apagado no habla, pero el aviso se sigue viendo en pantalla. Cambialo estacionado.</p>
-</section>
+  <div class="bloque">
+    <h2>Mi cuenta</h2>
+    <p class="ayuda" id="cuentaEstado"></p>
+    <button id="cuentaIngresar" type="button">Ingresar con Google</button>
+    <button id="cuentaSalir" type="button" hidden>Salir de mi cuenta</button>
+    <p class="error" id="cuentaError" role="status" hidden></p>
+  </div>
 
-<footer>Radares: listado de la ANSV para rutas nacionales y © colaboradores de OpenStreetMap (ODbL); pueden faltar o estar viejos. Barrios y mapa: OpenStreetMap. Tráfico y lugares: TomTom. La velocidad sale del GPS y es aproximada. Copi cuenta teléfonos y viajes de forma anónima, sin guardar ubicaciones ni destinos. Los avisos son una ayuda: mandan las señales y el cartel de velocidad.</footer>
+  <label>¿Cómo querés que te llame?
+    <input id="nombreUsuario" type="text" maxlength="30" autocomplete="given-name" placeholder="Tu nombre">
+  </label>
+
+  <div class="bloque">
+    <h2>Voz</h2>
+    <div class="tres" id="opcionesVoz"></div>
+    <label for="vozLista" class="ayuda">Voces en español de este teléfono</label>
+    <select id="vozLista" hidden></select>
+    <p class="ayuda" id="vozActual"></p>
+  </div>
+
+  <div class="bloque">
+    <h2>Avisos por voz</h2>
+    <div class="fila" id="interruptores"></div>
+    <p class="ayuda">Apagado no habla, pero el aviso se sigue viendo en pantalla. Cambialo estacionado.</p>
+  </div>
+
+  <div class="bloque">
+    <h2>Mis datos</h2>
+    <button id="demo" type="button">Ver demostración, sin salir</button>
+    <button class="discreto" id="olvidarLugares" type="button">Olvidar mis lugares</button>
+    <button class="discreto peligro" id="borrarDatos" type="button">Borrar mis datos</button>
+    <p class="ayuda" id="datosEstado" role="status"></p>
+    <p class="ayuda"><a href="privacidad.html" target="_blank" rel="noopener">Cómo cuido tus datos</a></p>
+  </div>
+
+  <footer>Radares: listado de la ANSV para rutas nacionales y © colaboradores de OpenStreetMap (ODbL); pueden faltar o estar viejos. Barrios y mapa: OpenStreetMap. Tráfico y lugares: TomTom. La velocidad sale del GPS y es aproximada. Los avisos son una ayuda: mandan las señales y el cartel de velocidad.</footer>
+</section>
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
 <script src="clave.js"></script>
@@ -236,8 +327,150 @@ const VIA_PRINCIPAL = /panamericana|autopista|acceso|ruta|riccheri|general paz|a
 
 /* ---------- Guardado en el teléfono ---------- */
 function leer(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-function guardar(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
-function quitar(k) { try { localStorage.removeItem(k); } catch (e) {} }
+function guardar(k, v) { try { localStorage.setItem(k, v); } catch (e) {} programarSubida(k); }
+function quitar(k) { try { localStorage.removeItem(k); } catch (e) {} programarSubida(k); }
+
+/* ---------- Perfil de cada usuario: se copia a su cuenta para tenerlo en otro teléfono ---------- */
+const CLAVES_PERFIL = ["nombre_usuario", "voz_tipo", "voz_nombre_mujer", "voz_nombre_hombre", "voz_nombre_mayordomo",
+  "voz_cortes", "voz_radares", "voz_velocidad", "voz_trafico", "lugares", "no_favoritos", "bienvenida_hecha"];
+let usuario = null, autenticacion = null, relojSubida = null, aplicandoPerfil = false;
+function programarSubida(k) {
+  if (!usuario || aplicandoPerfil || !CLAVES_PERFIL.includes(k)) return;
+  clearTimeout(relojSubida);
+  relojSubida = setTimeout(subirPerfil, 1500);
+}
+function perfilLocal() {
+  const p = {};
+  for (const k of CLAVES_PERFIL) { const v = leer(k); if (v !== null) p[k] = v; }
+  return p;
+}
+function subirPerfil() {
+  clearTimeout(relojSubida); relojSubida = null;
+  if (!usuario || !baseDatos) return Promise.resolve();
+  return baseDatos.collection("usuarios").doc(usuario.uid).set({
+    perfil: perfilLocal(), actualizado: firebase.firestore.FieldValue.serverTimestamp()
+  }).catch(() => {});
+}
+function aplicarPerfil(p) {
+  aplicandoPerfil = true;
+  for (const k of CLAVES_PERFIL) { if (p[k] === undefined) quitar(k); else guardar(k, String(p[k])); }
+  aplicandoPerfil = false;
+}
+function borrarPerfilLocal() {
+  aplicandoPerfil = true;
+  CLAVES_PERFIL.forEach(quitar);
+  aplicandoPerfil = false;
+}
+async function alCambiarCuenta(u) {
+  usuario = u;
+  if (u && baseDatos) {
+    try {
+      const d = await baseDatos.collection("usuarios").doc(u.uid).get();
+      if (d.exists && d.data().perfil) aplicarPerfil(d.data().perfil);
+      else await subirPerfil();
+    } catch (e) {}
+    if (!$("pantallaBienvenida").hidden) terminarBienvenida();
+  }
+  refrescarPerfil();
+}
+async function ingresarConGoogle(error) {
+  error.hidden = true;
+  if (!autenticacion) { error.textContent = "No se pudo conectar con Google. Revisá la conexión y recargá la página."; error.hidden = false; return; }
+  try {
+    await autenticacion.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+  } catch (e) {
+    if (e.code === "auth/popup-closed-by-user" || e.code === "auth/cancelled-popup-request") return;
+    error.textContent = e.code === "auth/popup-blocked"
+      ? "El teléfono bloqueó la ventana de Google. Permitila en los ajustes del navegador y probá de nuevo."
+      : "No se pudo ingresar con Google (" + (e.code || "error") + "). Probá de nuevo.";
+    error.hidden = false;
+  }
+}
+async function salirDeCuenta() {
+  await subirPerfil();
+  if (autenticacion) await autenticacion.signOut();
+  borrarPerfilLocal();
+  refrescarPerfil();
+  mostrarBienvenidaSiHaceFalta();
+}
+let confirmandoBorrado = false;
+async function borrarMisDatos() {
+  const estado = $("datosEstado"), boton = $("borrarDatos");
+  if (!confirmandoBorrado) {
+    confirmandoBorrado = true;
+    boton.textContent = "Tocá de nuevo para borrar todo";
+    estado.textContent = "Se borran tu configuración, tus lugares y tu acceso a Copi. No se puede deshacer.";
+    return;
+  }
+  confirmandoBorrado = false;
+  boton.textContent = "Borrar mis datos";
+  boton.disabled = true;
+  try {
+    clearTimeout(relojSubida);
+    if (usuario && baseDatos) {
+      await baseDatos.collection("usuarios").doc(usuario.uid).delete();
+      await usuario.delete();
+    }
+    borrarPerfilLocal();
+    estado.textContent = "Tus datos se borraron.";
+    refrescarPerfil();
+    mostrarAjustes(false);
+    mostrarBienvenidaSiHaceFalta();
+  } catch (e) {
+    estado.textContent = e && e.code === "auth/requires-recent-login"
+      ? "Por seguridad, Google pide que ingreses de nuevo: tocá “Salir de mi cuenta”, volvé a ingresar y borrá otra vez."
+      : "No se pudieron borrar los datos de tu cuenta. Revisá la conexión y probá de nuevo.";
+  } finally {
+    boton.disabled = false;
+  }
+}
+
+/* ---------- Saludo y pantallas ---------- */
+function saludoDelDia() {
+  const h = new Date().getHours();
+  const base = h >= 5 && h < 13 ? "Buen día" : h >= 13 && h < 20 ? "Buenas tardes" : "Buenas noches";
+  const n = (leer("nombre_usuario") || "").trim();
+  return n ? base + ", " + n : base;
+}
+function refrescarPerfil() {
+  $("saludo").textContent = saludoDelDia();
+  if (document.activeElement !== $("nombreUsuario")) $("nombreUsuario").value = leer("nombre_usuario") || "";
+  $("cuentaEstado").textContent = usuario
+    ? "Ingresaste como " + (usuario.email || "tu cuenta de Google") + ". Tu configuración se guarda en tu cuenta."
+    : "Sin cuenta: tu configuración queda solo en este teléfono.";
+  $("cuentaIngresar").hidden = !!usuario;
+  $("cuentaSalir").hidden = !usuario;
+  dibujarInterruptores(); dibujarSugerencias(); elegirVoz();
+}
+let pasoBienvenida = 1;
+function dibujarBienvenida() {
+  ["bienvenidaNombrePaso", "bienvenidaVozPaso", "bienvenidaCuentaPaso"].forEach((id, i) => { $(id).hidden = i + 1 !== pasoBienvenida; });
+  [1, 2, 3].forEach(n => { $("paso" + n).dataset.activo = n <= pasoBienvenida ? "si" : "no"; });
+}
+function pantallaSinViaje(enBienvenida) {
+  if (viaje) return;
+  $("pantallaBienvenida").hidden = !enBienvenida;
+  $("pantallaInicio").hidden = enBienvenida;
+  $("seccionMusica").hidden = enBienvenida;
+}
+function mostrarBienvenidaSiHaceFalta() {
+  if (leer("bienvenida_hecha") || usuario) { pantallaSinViaje(false); return; }
+  pasoBienvenida = 1;
+  $("bienvenidaNombre").value = leer("nombre_usuario") || "";
+  dibujarBienvenida();
+  pantallaSinViaje(true);
+}
+function terminarBienvenida() {
+  guardar("bienvenida_hecha", "si");
+  pantallaSinViaje(false);
+  refrescarPerfil();
+}
+function mostrarAjustes(abrir) {
+  $("pantallaAjustes").hidden = !abrir;
+  $("pantallaInicio").hidden = abrir || !!viaje;
+  $("seccionMusica").hidden = abrir;
+  if (abrir) { refrescarPerfil(); scrollTo(0, 0); }
+}
 
 /* ---------- Cuentas de mapa ---------- */
 function metros(a, b) {
@@ -316,9 +549,7 @@ function tonoVoz() {
   return t === "mujer" ? 1.15 : t === "hombre" ? 0.75 : 0.65;
 }
 function dibujarVoces() {
-  const caja = $("opcionesVoz");
-  if (!caja) return;
-  caja.replaceChildren(...OPCIONES_TIPO_VOZ.map(([tipo, nombre]) => {
+  for (const caja of [$("opcionesVoz"), $("bienvenidaVoces")]) caja.replaceChildren(...OPCIONES_TIPO_VOZ.map(([tipo, nombre]) => {
     const b = document.createElement("button");
     b.type = "button"; b.textContent = nombre; b.setAttribute("aria-pressed", tipoVoz() === tipo ? "true" : "false");
     if (tipoVoz() === tipo) b.style.borderColor = "var(--verde)";
@@ -379,10 +610,10 @@ function dibujarInterruptores() {
 
 let ultimaFrase = "";
 /* Sin tipo habla siempre (saludo, llegada tarde, preguntas). Con tipo respeta su interruptor. */
-function decir(frase, tipo) {
+function decir(frase, tipo, textual) {
   if (tipo && vozApagada(tipo)) return;
   const mayordomo = tipoVoz() === "mayordomo";
-  if (mayordomo) frase = formal(frase);
+  if (mayordomo && !textual) frase = formal(frase);
   ultimaFrase = frase;
   if (!window.speechSynthesis) return;
   const u = new SpeechSynthesisUtterance(frase);
@@ -758,9 +989,9 @@ function viajeNuevo(demo, atento) {
 
 function mostrarPantalla(enViaje) {
   $("pantallaInicio").hidden = enViaje;
-  $("pantallaInicio").style.display = enViaje ? "none" : "grid";
   $("pantallaViaje").hidden = !enViaje;
-  $("pantallaViaje").style.display = enViaje ? "grid" : "none";
+  $("pantallaAjustes").hidden = true;
+  $("seccionMusica").hidden = false;
   if (enViaje) { prepararMapa(); if (mapa) mapa.invalidateSize(); }
   else cerrarMapa();
 }
@@ -800,7 +1031,7 @@ async function empezar(demo, atento, lugar) {
     if (!claveFija()) return error("Copi todavía no tiene la clave de tráfico. Hay que cargarla en el administrador.");
   }
   // La voz del iPhone solo se destraba desde un toque: por eso se habla acá mismo.
-  decir(demo ? "Demostración de Copi." : atento ? "Modo atento activado." : "Copi listo.");
+  decir(saludoDelDia() + ". " + (demo ? "Esta es una demostración." : atento ? "Quedo atento al camino." : "Listo para salir."), null, true);
   viaje = viajeNuevo(demo, atento);
   $("marcaDemo").hidden = !demo;
   $("empezar").disabled = true;
@@ -1080,6 +1311,7 @@ function iniciarFirebase() {
     if (!window.firebase || !window.FIREBASE_CONFIG) return;
     firebase.initializeApp(window.FIREBASE_CONFIG);
     baseDatos = firebase.firestore();
+    if (firebase.auth) { autenticacion = firebase.auth(); autenticacion.onAuthStateChanged(alCambiarCuenta); }
     configLista = baseDatos.collection("config").doc("copi").get().then(d => {
       configCopi = d.exists ? d.data() : {};
       guardar("config_copi", JSON.stringify(configCopi));
@@ -1217,7 +1449,22 @@ $("nombreUsuario").value = leer("nombre_usuario") || "";
 $("nombreUsuario").addEventListener("input", e => {
   const n = e.target.value.trim();
   if (n) guardar("nombre_usuario", n); else quitar("nombre_usuario");
+  $("saludo").textContent = saludoDelDia();
 });
+$("abrirAjustes").addEventListener("click", () => mostrarAjustes(true));
+$("cerrarAjustes").addEventListener("click", () => mostrarAjustes(false));
+$("cuentaIngresar").addEventListener("click", () => ingresarConGoogle($("cuentaError")));
+$("cuentaSalir").addEventListener("click", salirDeCuenta);
+$("borrarDatos").addEventListener("click", borrarMisDatos);
+$("bienvenidaSeguir1").addEventListener("click", () => {
+  const n = $("bienvenidaNombre").value.trim();
+  if (n) guardar("nombre_usuario", n); else quitar("nombre_usuario");
+  pasoBienvenida = 2; dibujarBienvenida();
+});
+$("bienvenidaSeguir2").addEventListener("click", () => { pasoBienvenida = 3; dibujarBienvenida(); });
+$("bienvenidaGoogle").addEventListener("click", () => ingresarConGoogle($("bienvenidaError")));
+$("bienvenidaSinCuenta").addEventListener("click", terminarBienvenida);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden" && relojSubida) subirPerfil(); });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible" || !viaje) return;
   mantenerPantalla();
@@ -1237,7 +1484,9 @@ dibujarSugerencias();
 dibujarMusica();
 elegirVoz();
 dibujarVoces();
+refrescarPerfil();
 mostrarPantalla(false);
+mostrarBienvenidaSiHaceFalta();
 </script>
 </body>
 </html>
