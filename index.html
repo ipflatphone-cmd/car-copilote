@@ -96,6 +96,10 @@ button.peligro { color: var(--rojo); }
 .logo { flex: none; width: 46px; height: 46px; display: block; }
 #saludo { font-size: 27px; font-weight: 800; line-height: 1.1; letter-spacing: -.01em; overflow-wrap: anywhere; }
 button.icono { width: 52px; min-height: 52px; flex: none; padding: 0; font-size: 22px; }
+.dato { display: flex; justify-content: space-between; gap: 12px; }
+.dato span:last-child { flex: none; font-weight: 700; }
+h3 { margin: 0; font-size: 17px; }
+h3::first-letter { text-transform: uppercase; }
 .plegable { border-top: 1px solid var(--linea); padding-top: 12px; }
 .plegable > summary { cursor: pointer; font-size: 19px; font-weight: 700; min-height: 36px; }
 .plegable[open] > summary { margin-bottom: 12px; }
@@ -126,7 +130,7 @@ footer a, .ayuda a { color: var(--azul); }
   <div class="bloque" id="bienvenidaNombrePaso">
     <svg class="logo" role="img" aria-label="Copi"><use href="#logoCopi"/></svg>
     <h1>Hola, soy Copi, tu copiloto</h1>
-    <p class="ayuda">Te aviso por voz del tráfico, los radares y tu agenda, mientras Waze o Maps te guían.</p>
+    <p class="ayuda">Te aviso por voz del tráfico, los radares, los peajes y tu agenda, mientras Waze o Maps te guían.</p>
     <label>¿Cómo querés que te llame?
       <input id="bienvenidaNombre" type="text" maxlength="30" autocomplete="given-name" placeholder="Tu nombre">
     </label>
@@ -183,6 +187,16 @@ footer a, .ayuda a { color: var(--azul); }
       <p class="ayuda" id="avisoAgenda">Solo lee tus citas de las próximas 24 horas. Google puede pedirte aprobarlo de nuevo cada tanto.</p>
       <div class="bloque" id="listaAgenda"></div>
       <button class="discreto" id="desconectarAgenda" type="button" hidden>Desconectar agenda</button>
+    </div>
+  </details>
+
+  <details class="plegable">
+    <summary>Mi estadística</summary>
+    <div class="bloque">
+      <p class="ayuda" id="estadisticaVacia">Todavía no hay nada. Cuento los peajes y radares que pasás con Copi abierto.</p>
+      <div class="bloque" id="listaEstadistica"></div>
+      <p class="ayuda">Es aproximada: sale del GPS y de mapas que pueden estar incompletos. No es una multa ni un dato oficial.</p>
+      <button class="discreto" id="borrarEstadistica" type="button" hidden>Borrar mi estadística</button>
     </div>
   </details>
 
@@ -305,7 +319,7 @@ footer a, .ayuda a { color: var(--azul); }
     <p class="ayuda"><a href="privacidad.html" target="_blank" rel="noopener">Cómo cuido tus datos</a></p>
   </div>
 
-  <footer>Radares: listado de la ANSV para rutas nacionales y © colaboradores de OpenStreetMap (ODbL); pueden faltar o estar viejos. Barrios y mapa: OpenStreetMap. Tráfico y lugares: TomTom. La velocidad sale del GPS y es aproximada. Los avisos son una ayuda: mandan las señales y el cartel de velocidad.</footer>
+  <footer>Radares: listado de la ANSV para rutas nacionales y © colaboradores de OpenStreetMap (ODbL). Peajes: © colaboradores de OpenStreetMap (ODbL). Pueden faltar o estar viejos. Barrios y mapa: OpenStreetMap. Tráfico y lugares: TomTom. La velocidad sale del GPS y es aproximada. Los avisos son una ayuda: mandan las señales y el cartel de velocidad.</footer>
 </section>
 </main>
 
@@ -317,6 +331,7 @@ footer a, .ayuda a { color: var(--azul); }
 <script src="firebase-config.js"></script>
 <script src="clave.js"></script>
 <script src="radares.js"></script>
+<script src="peajes.js"></script>
 <script src="zonas.js"></script>
 <script>
 "use strict";
@@ -332,6 +347,12 @@ const TOLERANCIA_VELOCIDAD = 1.1;  // la ley da un 10 % de margen
 const RADIO_SIN_DESTINO_KM = 8;
 const CERCA_DE_LA_RUTA_M = 250;
 const AVISO_RADAR_M = 800;
+const AVISO_PEAJE_M = 1500;
+const RECORDAR_ACCIDENTE_M = 1500; // un accidente avisado de lejos se recuerda al llegar
+const PASO_PEAJE_M = 60;           // a esta distancia de una cabina, el peaje cuenta como pasado
+const PASO_RADAR_M = 80;
+const SALIDA_RADAR_M = 150;
+const MINUTOS_ENTRE_CONTEOS = 30;  // el mismo peaje o radar no cuenta dos veces en este rato
 const CAMPOS = "{incidents{type,geometry{type,coordinates},properties{id,iconCategory,magnitudeOfDelay,from,to,delay,roadNumbers}}}";
 const TIPOS = { 1: ["Accidente", "alto"], 3: ["Peligro", "alto"], 14: ["Vehículo parado", "medio"], 8: ["Calle cortada", "alto"],
                 7: ["Carril cerrado", "medio"], 6: ["Embotellamiento", "medio"], 9: ["Obra", "medio"], 11: ["Inundación", "alto"] };
@@ -344,7 +365,8 @@ function quitar(k) { try { localStorage.removeItem(k); } catch (e) {} programarS
 
 /* ---------- Perfil de cada usuario: se copia a su cuenta para tenerlo en otro teléfono ---------- */
 const CLAVES_PERFIL = ["nombre_usuario", "voz_tipo", "voz_nombre_mujer", "voz_nombre_hombre", "voz_nombre_mayordomo",
-  "voz_cortes", "voz_radares", "voz_velocidad", "voz_trafico", "lugares", "no_favoritos", "bienvenida_hecha", "copiloto_ia", "agenda_conectada"];
+  "voz_cortes", "voz_radares", "voz_velocidad", "voz_trafico", "voz_accidentes", "voz_peajes", "lugares", "no_favoritos", "bienvenida_hecha",
+  "copiloto_ia", "agenda_conectada", "estadistica"];
 let usuario = null, autenticacion = null, relojSubida = null, aplicandoPerfil = false;
 function programarSubida(k) {
   if (!usuario || aplicandoPerfil || !CLAVES_PERFIL.includes(k)) return;
@@ -451,6 +473,7 @@ function refrescarPerfil() {
   $("saludo").textContent = saludoDelDia();
   dibujarIa();
   dibujarEstadoAgenda();
+  dibujarEstadistica();
   if (document.activeElement !== $("nombreUsuario")) $("nombreUsuario").value = leer("nombre_usuario") || "";
   $("cuentaEstado").textContent = usuario
     ? "Ingresaste como " + (usuario.email || "tu cuenta de Google") + ". Tu configuración se guarda en tu cuenta."
@@ -601,7 +624,7 @@ function formal(f) {
     .replace(/con este tráfico llegás (\d+) minutos tarde/, "con este tráfico llegará $1 minutos tarde")
     .replace(/^Llegás a las /, "llegará a las ")
     .replace(/^Atención: /, "")
-    .replace(/^(Accidente|Peligro|Vehículo|Calle|Carril|Embotellamiento|Obra|Inundación|Radar|Máxima|Ya|El|Guardado|Modo|Demostración|Llegué)/, m => m.toLowerCase());
+    .replace(/^(Accidente|Peligro|Vehículo|Calle|Carril|Embotellamiento|Obra|Inundación|Radar|Peaje|Máxima|Ya|El|Guardado|Modo|Demostración|Llegué)/, m => m.toLowerCase());
   return nombre ? nombre + ", " + texto : texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 /* Safari a veces entrega las voces tarde y sin avisar: se vuelve a mirar unas veces. */
@@ -610,7 +633,7 @@ if (window.speechSynthesis) {
   speechSynthesis.onvoiceschanged = elegirVoz;
   [500, 1500, 4000].forEach(ms => setTimeout(() => { if (!vocesEspanol.length) elegirVoz(); }, ms));
 }
-const OPCIONES_VOZ = [["cortes", "Calles cerradas"], ["radares", "Radares"], ["velocidad", "Velocidad"], ["trafico", "Tráfico"]];
+const OPCIONES_VOZ = [["accidentes", "Accidentes"], ["cortes", "Calles cerradas"], ["radares", "Radares"], ["peajes", "Peajes"], ["velocidad", "Velocidad"], ["trafico", "Tráfico"]];
 const vozApagada = tipo => leer("voz_" + tipo) === "no";
 function dibujarInterruptores() {
   $("interruptores").replaceChildren(...OPCIONES_VOZ.map(([tipo, nombre]) => {
@@ -813,6 +836,9 @@ function actualizarMapa(forzar) {
   capaAvisos.clearLayers();
   for (const r of viaje.radares) if (metros(viaje.pos, r) < 5000) {
     L.circleMarker([r.lat, r.lon], { radius: 6, color: "#14181c", weight: 2, fillColor: "#ffb81c", fillOpacity: 1 }).addTo(capaAvisos);
+  }
+  for (const p of viaje.peajes) if (metros(viaje.pos, p) < 5000) {
+    L.circleMarker([p.lat, p.lon], { radius: 7, color: "#14181c", weight: 2, fillColor: "#6db7ff", fillOpacity: 1 }).addTo(capaAvisos);
   }
   for (const i of viaje.incidentes) {
     L.circleMarker([i.punto.lat, i.punto.lon], { radius: 8, color: "#14181c", weight: 2, fillColor: i.nivel === "alto" ? "#ff5a4f" : "#ffb81c", fillOpacity: 1 }).addTo(capaAvisos);
@@ -1116,6 +1142,7 @@ async function pedirIncidentes(pos, ruta, desde) {
 let viaje = null;
 function viajeNuevo(demo, atento) {
   return { demo, atento, pos: null, dest: null, limite: null, ruta: null, tramo: 0, incidentes: [], avisados: new Set(), radares: [],
+           peajes: [], peajeActivo: null, recordados: new Set(), contados: new Map(), radarPasando: null,
            seguimiento: null, reloj: null, relojDemo: null, bloqueo: null, ultimoEstadoLlegada: null, consultando: false,
            ultimaConsulta: 0, posUltimaConsulta: null, ultimaDemora: null, topeAvisado: false,
            limiteVia: null, ultimoLimite: 0, pidiendoLimite: false, lecturasExceso: 0, ultimoAvisoExceso: 0 };
@@ -1157,6 +1184,10 @@ function radaresDeLaZona() {
   const lista = typeof RADARES === "undefined" ? [] : RADARES;
   return lista.map(r => ({ lat: r[0], lon: r[1], vel: r[2] || null, oficial: r[3] === 1, id: "radar" + r[0] + "," + r[1] }));
 }
+function peajesDelPais() {
+  const lista = typeof PEAJES === "undefined" ? [] : PEAJES;
+  return lista.map(p => ({ nombre: p[0], lat: p[1], lon: p[2], cabinas: p[3].map(c => ({ lat: c[0], lon: c[1] })), id: "peaje" + p[0] }));
+}
 
 async function empezar(demo, atento, lugar) {
   $("errorInicio").hidden = true;
@@ -1188,6 +1219,7 @@ async function empezar(demo, atento, lugar) {
 async function iniciarReal(lugar) {
   viaje.pos = await pedirUbicacionUnaVez();
   viaje.radares = radaresDeLaZona();
+  viaje.peajes = peajesDelPais();
   viaje.limite = viaje.atento ? null : horaLimiteComoFecha($("horaLimite").value);
   const texto = viaje.atento || lugar ? "" : $("destino").value.trim();
   $("abrirWaze").href = "https://waze.com/ul";
@@ -1268,6 +1300,9 @@ function moverA(pos) {
   viaje.zona = zona;
   revisarParada();
   revisarRadares();
+  revisarPasoDeRadares();
+  revisarPeajes();
+  recordarAccidentes();
   revisarVelocidad();
   dibujar();
   revisarBanner();
@@ -1338,7 +1373,7 @@ function aplicarIncidentes(lista) {
     if (!importa(p, puntos[0], viaje)) continue;
     const tipo = TIPOS[p.iconCategory];
     viaje.incidentes.push({ id: p.id, punto: puntos[0], tipo: tipo[0], nivel: tipo[1], calle: p.from || "", hacia: p.to || "", demora: p.delay || 0,
-                            voz: p.iconCategory === 8 ? "cortes" : "trafico" });
+                            accidente: p.iconCategory === 1, voz: p.iconCategory === 1 ? "accidentes" : p.iconCategory === 8 ? "cortes" : "trafico" });
   }
   // Cambios: también avisa cuando un problema grave deja de figurar.
   for (const a of anteriores) {
@@ -1355,11 +1390,114 @@ function avisarNuevos() {
   for (const i of orden) {
     if (viaje.avisados.has(i.id)) continue;
     viaje.avisados.add(i.id);
+    if (metros(viaje.pos, i.punto) <= RECORDAR_ACCIDENTE_M * 2) viaje.recordados.add(i.id);
     let frase = i.tipo + " a " + vozDistancia(metros(viaje.pos, i.punto));
     if (i.calle) frase += ", en " + i.calle;
     if (i.demora >= 60) frase += ". Demora de " + Math.round(i.demora / 60) + " minutos";
     decir(frase + ".", i.voz);
   }
+}
+
+function recordarAccidentes() {
+  for (const i of viaje.incidentes) {
+    if (!i.accidente || !viaje.avisados.has(i.id) || viaje.recordados.has(i.id)) continue;
+    const d = metros(viaje.pos, i.punto);
+    if (d > RECORDAR_ACCIDENTE_M || !adelante(viaje.pos, i.punto, 90)) continue;
+    viaje.recordados.add(i.id);
+    decir("Accidente a " + vozDistancia(d) + (i.calle ? ", en " + i.calle : "") + ".", "accidentes");
+  }
+}
+
+/* ---------- Estadística de cada usuario: solo cantidades por mes, sin fechas ni recorridos ---------- */
+function leerEstadistica() { try { return JSON.parse(leer("estadistica")) || {}; } catch (e) { return {}; } }
+function anotar(cambio) {
+  if (viaje.demo) return;
+  const e = leerEstadistica(), mes = mesActual();
+  e[mes] = e[mes] || { peajes: {}, radares: 0, excesos: 0, sinMaxima: 0 };
+  cambio(e[mes]);
+  for (const viejo of Object.keys(e).sort().slice(0, -24)) delete e[viejo];
+  guardar("estadistica", JSON.stringify(e));
+}
+function contadoHace(id) {
+  const t = viaje.contados.get(id);
+  return t != null && Date.now() - t < MINUTOS_ENTRE_CONTEOS * 60000;
+}
+
+/* Cuenta el radar cuando el auto ya pasó, con la velocidad del punto más cercano. */
+function revisarPasoDeRadares() {
+  for (const r of viaje.radares) {
+    const d = metros(viaje.pos, r);
+    if (d > PASO_RADAR_M || contadoHace(r.id)) continue;
+    const s = viaje.radarPasando;
+    if (!s || d < s.menor) viaje.radarPasando = { radar: r, menor: d, vel: viaje.pos.vel, max: r.vel ? Number(r.vel) : limiteActual() };
+  }
+  const s = viaje.radarPasando;
+  if (!s || metros(viaje.pos, s.radar) <= SALIDA_RADAR_M) return;
+  viaje.radarPasando = null;
+  // Radares pegados (uno por sentido o repetidos en el mapa) cuentan como uno solo.
+  for (const otro of viaje.radares) if (metros(s.radar, otro) < 300) viaje.contados.set(otro.id, Date.now());
+  anotar(m => {
+    m.radares++;
+    if (!s.max || s.vel == null) m.sinMaxima++;
+    else if (s.vel > s.max * TOLERANCIA_VELOCIDAD) m.excesos++;
+  });
+}
+
+function revisarPeajes() {
+  for (const p of viaje.peajes) {
+    const d = metros(viaje.pos, p);
+    if (d > AVISO_PEAJE_M + 2000) continue;
+    if (!viaje.avisados.has(p.id) && d <= AVISO_PEAJE_M && adelante(viaje.pos, p, 50) && viaje.pos.vel != null && viaje.pos.vel >= 15
+        && (!viaje.ruta || distanciaARuta([p], viaje.ruta, viaje.tramo) <= 150)) {
+      viaje.avisados.add(p.id);
+      viaje.peajeActivo = p;
+      // Sin nombre propio se lee feo: alcanza con "Peaje".
+      decir((/^Peaje (de|en|sin) /.test(p.nombre) ? "Peaje" : p.nombre) + " a " + vozDistancia(d) + ".", "peajes");
+    }
+    if (!contadoHace(p.id) && p.cabinas.some(c => metros(viaje.pos, c) <= PASO_PEAJE_M)) {
+      viaje.contados.set(p.id, Date.now());
+      anotar(m => { m.peajes[p.nombre] = (m.peajes[p.nombre] || 0) + 1; });
+    }
+  }
+  const a = viaje.peajeActivo;
+  if (a && (metros(viaje.pos, a) > AVISO_PEAJE_M + 200 || metros(viaje.pos, a) < PASO_PEAJE_M || !adelante(viaje.pos, a, 90))) viaje.peajeActivo = null;
+}
+
+function dibujarEstadistica() {
+  const e = leerEstadistica(), meses = Object.keys(e).sort().reverse();
+  const dato = (texto, cantidad) => {
+    const d = document.createElement("div"); d.className = "dato";
+    const a = document.createElement("span"); a.textContent = texto;
+    const b = document.createElement("span"); b.textContent = cantidad;
+    d.append(a, b);
+    return d;
+  };
+  $("listaEstadistica").replaceChildren(...meses.map(mes => {
+    const m = e[mes], caja = document.createElement("div"), titulo = document.createElement("h3");
+    const [a, n] = mes.split("-").map(Number);
+    caja.className = "bloque";
+    titulo.textContent = new Date(a, n - 1, 1).toLocaleDateString("es-AR", { month: "long", year: "numeric" });
+    const peajes = Object.entries(m.peajes).sort((x, y) => y[1] - x[1]);
+    caja.append(titulo, dato("Peajes", peajes.reduce((t, p) => t + p[1], 0)));
+    for (const [nombre, veces] of peajes) { const d = dato(nombre, veces); d.classList.add("ayuda"); caja.append(d); }
+    caja.append(dato("Radares pasados", m.radares), dato("Con exceso de velocidad", m.excesos));
+    if (m.sinMaxima) { const d = dato("Sin dato de velocidad o máxima", m.sinMaxima); d.classList.add("ayuda"); caja.append(d); }
+    return caja;
+  }));
+  $("estadisticaVacia").hidden = meses.length > 0;
+  $("borrarEstadistica").hidden = !meses.length;
+}
+let confirmandoEstadistica = false;
+function borrarEstadistica() {
+  if (!confirmandoEstadistica) {
+    confirmandoEstadistica = true;
+    $("borrarEstadistica").textContent = "Tocá de nuevo para borrarla";
+    return;
+  }
+  confirmandoEstadistica = false;
+  $("borrarEstadistica").textContent = "Borrar mi estadística";
+  quitar("estadistica");
+  dibujarEstadistica();
 }
 
 function revisarRadares() {
@@ -1414,6 +1552,14 @@ function dibujar() {
     aviso.dataset.nivel = "medio";
     $("avisoTitulo").textContent = "Radar a " + textoDistancia(metros(viaje.pos, viaje.radarActivo));
     $("avisoDetalle").textContent = (viaje.radarActivo.vel ? "Máxima " + viaje.radarActivo.vel + " km/h" : "Velocidad máxima no informada") + (viaje.radarActivo.oficial ? ". Autorizado por la ANSV" : "");
+  } else if (hay.length && hay[0].accidente && hay[0].m < RECORDAR_ACCIDENTE_M) {
+    aviso.dataset.nivel = hay[0].nivel;
+    $("avisoTitulo").textContent = hay[0].tipo + " a " + textoDistancia(hay[0].m);
+    $("avisoDetalle").textContent = hay[0].calle + (hay[0].hacia ? " hacia " + hay[0].hacia : "");
+  } else if (viaje.peajeActivo) {
+    aviso.dataset.nivel = "medio";
+    $("avisoTitulo").textContent = "Peaje a " + textoDistancia(metros(viaje.pos, viaje.peajeActivo));
+    $("avisoDetalle").textContent = viaje.peajeActivo.nombre;
   } else if (hay.length) {
     aviso.dataset.nivel = hay[0].nivel;
     $("avisoTitulo").textContent = hay[0].tipo + " a " + textoDistancia(hay[0].m);
@@ -1424,7 +1570,8 @@ function dibujar() {
     $("avisoDetalle").textContent = "Sin avisos por ahora";
   }
   const lista = $("lista");
-  lista.replaceChildren(...hay.slice(viaje.radarActivo ? 0 : 1, 5).map(i => {
+  const avisoEsOtro = viaje.radarActivo || (viaje.peajeActivo && !(hay.length && hay[0].accidente && hay[0].m < RECORDAR_ACCIDENTE_M));
+  lista.replaceChildren(...hay.slice(avisoEsOtro ? 0 : 1, 5).map(i => {
     const li = document.createElement("li");
     const a = document.createElement("span"); a.textContent = i.tipo + (i.calle ? ", " + i.calle : "");
     const b = document.createElement("span"); b.className = "dist"; b.textContent = textoDistancia(i.m);
@@ -1480,6 +1627,21 @@ function cargarBannersActivos() {
   baseDatos.collection("banners").where("activo", "==", true).get()
     .then(r => { banners = r.docs.map(d => d.data()).filter(b => b.imagen); }).catch(() => {});
 }
+/* Orden al azar: cada banner sale una vez por vuelta y nunca dos veces seguidas, así todos se ven parejo. */
+let bolsaBanners = [], ultimoBanner = null;
+function siguienteBanner(lista) {
+  bolsaBanners = bolsaBanners.filter(b => lista.includes(b));
+  if (!bolsaBanners.length) {
+    bolsaBanners = lista.slice();
+    for (let i = bolsaBanners.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [bolsaBanners[i], bolsaBanners[j]] = [bolsaBanners[j], bolsaBanners[i]];
+    }
+    if (bolsaBanners.length > 1 && bolsaBanners[0] === ultimoBanner) bolsaBanners.push(bolsaBanners.shift());
+  }
+  ultimoBanner = bolsaBanners.shift();
+  return ultimoBanner;
+}
 /* Solo con el auto detenido, sin avisos importantes ni preguntas abiertas. */
 function bannersVigentes() { return viaje && viaje.demo ? [BANNER_EJEMPLO] : banners; }
 function puedeVerBanner() {
@@ -1503,10 +1665,9 @@ function revisarBanner() {
     }
     return;
   }
-  const lista = bannersVigentes();
-  const paso = Math.floor((Date.now() - viaje.detenidoDesde) / (SEGUNDOS_POR_BANNER * 1000)) % lista.length;
+  const paso = Math.floor((Date.now() - viaje.detenidoDesde) / (SEGUNDOS_POR_BANNER * 1000));
   if (estabaOculta || viaje.bannerPaso !== paso) {
-    const b = lista[paso], enlace = b.enlace && /^https:\/\//.test(b.enlace) ? b.enlace : "";
+    const b = siguienteBanner(bannersVigentes()), enlace = b.enlace && /^https:\/\//.test(b.enlace) ? b.enlace : "";
     $("bannerImg").src = b.imagen; $("bannerImg").alt = "Publicidad: " + (b.titulo || "");
     if (enlace) caja.href = enlace; else caja.removeAttribute("href");
     viaje.bannerPaso = paso;
@@ -1529,6 +1690,7 @@ function terminar() {
   $("preguntaDestino").hidden = true;
   $("preguntaFavorito").hidden = true;
   dibujarSugerencias();
+  dibujarEstadistica();
   mostrarPantalla(false);
 }
 
@@ -1542,6 +1704,7 @@ function iniciarDemo() {
   viaje.pos = { ...ruta[0], vel: 118, rumbo: rumbo(ruta[0], ruta[1]) };
   viaje.limiteVia = 100;
   viaje.radares = [{ ...ruta[22], vel: "100", id: "radarDemo" }];
+  viaje.peajes = [{ ...ruta[45], nombre: "Peaje de ejemplo", cabinas: [ruta[45]], id: "peajeDemo" }];
   viaje.limite = new Date(Date.now() + 14 * 60000);
   mostrarPantalla(true);
   actualizarLlegada(19 * 60, 6 * 60);
@@ -1555,7 +1718,7 @@ function iniciarDemo() {
   viaje.relojDemo = setInterval(() => {
     i = Math.min(i + 2, n - 1);
     // A los 30 segundos el auto se detiene, para ver cómo queda el banner.
-    if (++segundos > 30 && !viaje.demoDetenido) { viaje.demoDetenido = i; viaje.incidentes = []; viaje.radares = []; viaje.radarActivo = null; }
+    if (++segundos > 30 && !viaje.demoDetenido) { viaje.demoDetenido = i; viaje.incidentes = []; viaje.radares = []; viaje.radarActivo = null; viaje.peajes = []; viaje.peajeActivo = null; }
     if (viaje.demoDetenido) { moverA({ ...ruta[viaje.demoDetenido], vel: 0, rumbo: null }); return; }
     moverA({ ...ruta[i], vel: 118, rumbo: rumbo(ruta[i], ruta[i + 1]) });
   }, 1000);
@@ -1603,6 +1766,7 @@ $("cuentaIngresar").addEventListener("click", () => ingresarConGoogle($("cuentaE
 $("cuentaSalir").addEventListener("click", salirDeCuenta);
 $("interruptorIa").addEventListener("click", () => { guardar("copiloto_ia", iaActiva() ? "no" : "si"); dibujarIa(); });
 $("borrarDatos").addEventListener("click", borrarMisDatos);
+$("borrarEstadistica").addEventListener("click", borrarEstadistica);
 $("bienvenidaSeguir1").addEventListener("click", () => {
   const n = $("bienvenidaNombre").value.trim();
   if (n) guardar("nombre_usuario", n); else quitar("nombre_usuario");
