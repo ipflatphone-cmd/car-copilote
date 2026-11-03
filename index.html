@@ -66,7 +66,7 @@ button.principal { background: var(--ambar); border-color: var(--ambar); color: 
 #limite { font-size: 17px; color: var(--suave); }
 #estado, footer { color: var(--suave); font-size: 14px; }
 #mapa { height: 36vh; min-height: 220px; border-radius: 12px; background: var(--banquina); }
-#bannerCaja { display: block; height: 36vh; min-height: 200px; border-radius: 12px; overflow: hidden; background: #000; }
+#bannerCaja { display: block; aspect-ratio: 6 / 5; width: 100%; max-height: 60vh; border-radius: 12px; overflow: hidden; background: #000; }
 #bannerImg { display: block; width: 100%; height: 100%; object-fit: contain; }
 .tres button { font-size: 15px; min-height: 54px; padding: 6px; }
 .resultado { justify-content: space-between; gap: 10px; text-align: left; font-size: 16px; font-weight: 600; min-height: 54px; }
@@ -94,7 +94,12 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
     <p class="marca">Prototipo de prueba</p>
     <h1>Copi</h1>
   </div>
-  <p class="ayuda">Dejá esta página abierta en el iPhone, en el soporte. Waze sigue guiando en la pantalla del auto y esto te avisa por voz. Configurá todo antes de arrancar.</p>
+  <p class="ayuda">Dejá esta página abierta en el teléfono, en el soporte. Waze sigue guiando en la pantalla del auto y esto te avisa por voz. Configurá todo antes de arrancar.</p>
+
+  <label id="preguntaNombre">¿Cómo querés que te llame?
+    <input id="nombreUsuario" type="text" maxlength="30" autocomplete="given-name" placeholder="Tu nombre">
+    <span class="ayuda" id="nombreAyuda">Queda guardado solo en este teléfono. Podés cambiarlo cuando quieras.</span>
+  </label>
 
   <div class="bloque" id="sugerencias" hidden>
     <h2>¿Vas a alguno de tus lugares?</h2>
@@ -109,10 +114,6 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
     <div class="bloque" id="listaAgenda"></div>
   </div>
 
-  <label id="bloqueClave">Clave de TomTom
-    <input id="clave" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Pegala una sola vez">
-    <span class="ayuda">Queda guardada solo en este teléfono.</span>
-  </label>
   <label>¿A dónde vas? <span class="ayuda">(opcional)</span>
     <input id="destino" type="text" placeholder="Ej.: Aeropuerto de Ezeiza" autocomplete="off">
   </label>
@@ -124,7 +125,6 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
   <button id="atento" type="button">Modo atento, sin destino</button>
   <button id="demo" type="button">Ver demostración, sin salir</button>
   <p class="error" id="errorInicio" hidden></p>
-  <button id="borrarClave" type="button" hidden>Cambiar la clave</button>
 
   <div class="bloque">
     <h2>Buscar cerca de mí</h2>
@@ -156,6 +156,7 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
       <button id="favoritoNo" type="button">No guardar</button>
     </div>
   </div>
+  <a id="bannerCaja" target="_blank" rel="noopener" hidden><img id="bannerImg" alt=""></a>
   <div id="aviso" data-nivel="ok" aria-live="polite">
     <div id="avisoTitulo">Camino libre</div>
     <div id="avisoDetalle">Sin avisos por ahora</div>
@@ -163,7 +164,6 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
   <div id="velocimetro">
     <span id="velocidad">--</span><span>km/h</span><span id="limite">Máxima: sin dato</span>
   </div>
-  <a id="bannerCaja" target="_blank" rel="noopener" hidden><img id="bannerImg" alt=""></a>
   <div id="mapa" hidden></div>
   <div id="llegada" hidden>
     <div id="eta"></div>
@@ -193,7 +193,7 @@ button.discreto { min-height: 46px; font-size: 15px; font-weight: 600; color: va
 <section class="bloque" aria-label="Voz">
   <h2>Voz</h2>
   <div class="tres" id="opcionesVoz"></div>
-  <label for="vozLista" class="ayuda">Voces en español de este iPhone</label>
+  <label for="vozLista" class="ayuda">Voces en español de este teléfono</label>
   <select id="vozLista" hidden></select>
   <p class="ayuda" id="vozActual"></p>
 </section>
@@ -334,13 +334,14 @@ function dibujarVoces() {
     o.selected = !!vozElegida && v.name === vozElegida.name;
     return o;
   }));
-  $("vozActual").textContent = !vozElegida ? "Safari no muestra la lista de voces de este iPhone. Igual habla con su voz en español y cambia el tono según la opción."
+  $("vozActual").textContent = !vozElegida ? "Este navegador no muestra la lista de voces. Igual habla con su voz en español y cambia el tono según la opción."
     : vozExacta ? "Usando: " + vozElegida.name + ". Podés elegir otra en la lista."
     : "No reconocí una voz de ese tipo. Uso " + vozElegida.name + " con otro tono; probá las demás de la lista.";
 }
 /* El mayordomo trata de usted y con formalidad. */
 function formal(f) {
-  return "Pablo, " + f
+  const nombre = (leer("nombre_usuario") || "").trim();
+  const texto = f
     .replace("Hola, así voy a hablarte en el auto.", "así le hablaré en el auto.")
     .replace(/Bajá la velocidad\. Vas a (\d+), la máxima es (\d+)\./, "le sugiero reducir la velocidad. Va a $1 y la máxima es $2.")
     .replace(/Paraste acá más de diez minutos\. ¿Lo guardo en favoritos\?/, "se ha detenido aquí más de diez minutos. ¿Desea guardarlo en favoritos?")
@@ -350,6 +351,7 @@ function formal(f) {
     .replace(/^Llegás a las /, "llegará a las ")
     .replace(/^Atención: /, "")
     .replace(/^(Accidente|Peligro|Vehículo|Calle|Carril|Embotellamiento|Obra|Inundación|Radar|Máxima|Ya|El|Guardado|Modo|Demostración|Llegué)/, m => m.toLowerCase());
+  return nombre ? nombre + ", " + texto : texto.charAt(0).toUpperCase() + texto.slice(1);
 }
 /* Safari a veces entrega las voces tarde y sin avisar: se vuelve a mirar unas veces. */
 if (window.speechSynthesis) {
@@ -404,8 +406,11 @@ function contarConsulta() {
 function consultasDelMes() {
   return leer("consultas_mes") === new Date().toISOString().slice(0, 7) ? Number(leer("consultas_n")) || 0 : 0;
 }
-const claveFija = () => window.CLAVE_WEB || "";
-const clave = () => encodeURIComponent(claveFija() || leer("tomtom_clave") || "");
+/* Las claves se cargan desde el administrador; el último valor queda guardado para arrancar sin esperar. */
+let configCopi = {};
+try { configCopi = JSON.parse(leer("config_copi") || "{}"); } catch (e) {}
+const claveFija = () => configCopi.tomtom || window.CLAVE_WEB || "";
+const clave = () => encodeURIComponent(claveFija());
 
 async function pedirLimiteDeCalle(pos) {
   const u = "https://api.tomtom.com/search/2/reverseGeocode/" + pos.lat + "," + pos.lon + ".json?returnSpeedLimit=true&radius=30&key=" + clave();
@@ -613,7 +618,7 @@ function conectarAgenda() {
     return;
   }
   const cliente = google.accounts.oauth2.initTokenClient({
-    client_id: GOOGLE_CLIENT_ID,
+    client_id: configCopi.googleClientId || GOOGLE_CLIENT_ID,
     scope: "https://www.googleapis.com/auth/calendar.readonly",
     callback: r => {
       if (r.error || !r.access_token) { aviso.textContent = "Google no dio el permiso. Podés volver a intentarlo."; return; }
@@ -743,9 +748,8 @@ function radaresDeLaZona() {
 async function empezar(demo, atento, lugar) {
   $("errorInicio").hidden = true;
   if (!demo && !claveFija()) {
-    const nueva = $("clave").value.trim();
-    if (nueva) { guardar("tomtom_clave", nueva); $("clave").value = ""; }
-    if (!leer("tomtom_clave")) return error("Falta la clave de TomTom. Pegala arriba.");
+    await Promise.race([configLista, new Promise(r => setTimeout(r, 3000))]);
+    if (!claveFija()) return error("Copi todavía no tiene la clave de tráfico. Hay que cargarla en el administrador.");
   }
   // La voz del iPhone solo se destraba desde un toque: por eso se habla acá mismo.
   decir(demo ? "Demostración de Copi." : atento ? "Modo atento activado." : "Copi listo.");
@@ -757,8 +761,8 @@ async function empezar(demo, atento, lugar) {
     else await iniciarReal(lugar);
   } catch (e) {
     terminar();
-    if (e instanceof ErrorClave) { mostrarBotonClave(); return error("TomTom rechazó la clave. Tocá «Cambiar la clave» y pegala de nuevo."); }
-    if (e.code === 1) return error("El iPhone no dio permiso de ubicación. Activalo en Ajustes > Privacidad > Localización > Sitios web de Safari.");
+    if (e instanceof ErrorClave) return error("TomTom rechazó la clave. Hay que revisarla en el administrador.");
+    if (e.code === 1) return error("El teléfono no dio permiso de ubicación. Activalo en los ajustes de ubicación del teléfono para este navegador.");
     if (e.code === 2 || e.code === 3) return error("No se pudo obtener la ubicación. Probá de nuevo con cielo abierto.");
     return error("No se pudo arrancar: " + e.message + ". Revisá la conexión y probá de nuevo.");
   } finally {
@@ -1004,7 +1008,9 @@ function estado(t) { $("estado").textContent = t; }
 
 /* ---------- Firebase: banners y contadores anónimos. Si falla, Copi sigue andando igual ---------- */
 const SEGUNDOS_PARA_BANNER = 15, SEGUNDOS_POR_BANNER = 20, VELOCIDAD_DETENIDO = 3;
-let baseDatos = null, banners = [];
+const BANNER_EJEMPLO = { titulo: "Ejemplo", imagen: "data:image/svg+xml," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1000"><rect width="1200" height="1000" fill="#1D54C2"/><text x="600" y="430" fill="#fff" font-family="sans-serif" font-size="130" font-weight="700" text-anchor="middle">Tu banner acá</text><text x="600" y="590" fill="#fff" font-family="sans-serif" font-size="70" text-anchor="middle">Ejemplo de 1200 × 1000</text></svg>') };
+let baseDatos = null, banners = [], configLista = Promise.resolve();
 function fechaHoy() {
   const d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
@@ -1014,18 +1020,23 @@ function iniciarFirebase() {
     if (!window.firebase || !window.FIREBASE_CONFIG) return;
     firebase.initializeApp(window.FIREBASE_CONFIG);
     baseDatos = firebase.firestore();
+    configLista = baseDatos.collection("config").doc("copi").get().then(d => {
+      configCopi = d.exists ? d.data() : {};
+      guardar("config_copi", JSON.stringify(configCopi));
+    }).catch(() => {});
     sumar("aperturas");
     registrarTelefono();
     cargarBannersActivos();
   } catch (e) { baseDatos = null; }
 }
+const esPrueba = location.hostname === "localhost";
 function sumar(campo) {
-  if (!baseDatos) return;
+  if (!baseDatos || esPrueba) return;
   baseDatos.collection("dias").doc(fechaHoy()).set({ [campo]: firebase.firestore.FieldValue.increment(1) }, { merge: true }).catch(() => {});
 }
 /* Un código al azar por teléfono, sin ningún dato personal, una vez por día. */
 function registrarTelefono() {
-  if (!baseDatos || leer("telefono_dia") === fechaHoy()) return;
+  if (!baseDatos || esPrueba || leer("telefono_dia") === fechaHoy()) return;
   let codigo = leer("telefono_codigo");
   if (!codigo) {
     codigo = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, "0")).join("");
@@ -1040,8 +1051,9 @@ function cargarBannersActivos() {
     .then(r => { banners = r.docs.map(d => d.data()).filter(b => b.imagen); }).catch(() => {});
 }
 /* Solo con el auto detenido, sin avisos importantes ni preguntas abiertas. */
+function bannersVigentes() { return viaje && viaje.demo ? [BANNER_EJEMPLO] : banners; }
 function puedeVerBanner() {
-  if (!viaje || !banners.length || viaje.radarActivo) return false;
+  if (!viaje || !bannersVigentes().length || viaje.radarActivo) return false;
   if (!$("preguntaDestino").hidden || !$("preguntaFavorito").hidden) return false;
   if (viaje.incidentes.some(i => i.nivel === "alto")) return false;
   return !!viaje.detenidoDesde && Date.now() - viaje.detenidoDesde >= SEGUNDOS_PARA_BANNER * 1000;
@@ -1055,19 +1067,20 @@ function revisarBanner() {
   if (!mostrar) {
     if (!estabaOculta) {
       caja.hidden = true; caja.removeAttribute("href");
-      if (mapa) { $("mapa").hidden = false; mapa.invalidateSize(); actualizarMapa(true); }
+      $("aviso").hidden = false;
     }
     return;
   }
-  const paso = Math.floor((Date.now() - viaje.detenidoDesde) / (SEGUNDOS_POR_BANNER * 1000)) % banners.length;
+  const lista = bannersVigentes();
+  const paso = Math.floor((Date.now() - viaje.detenidoDesde) / (SEGUNDOS_POR_BANNER * 1000)) % lista.length;
   if (estabaOculta || viaje.bannerPaso !== paso) {
-    const b = banners[paso], enlace = b.enlace && /^https:\/\//.test(b.enlace) ? b.enlace : "";
+    const b = lista[paso], enlace = b.enlace && /^https:\/\//.test(b.enlace) ? b.enlace : "";
     $("bannerImg").src = b.imagen; $("bannerImg").alt = "Publicidad: " + (b.titulo || "");
     if (enlace) caja.href = enlace; else caja.removeAttribute("href");
     viaje.bannerPaso = paso;
   }
   caja.hidden = false;
-  $("mapa").hidden = true;
+  $("aviso").hidden = true;
 }
 
 function terminar() {
@@ -1075,6 +1088,7 @@ function terminar() {
     if (viaje.seguimiento != null) navigator.geolocation.clearWatch(viaje.seguimiento);
     clearInterval(viaje.reloj); clearInterval(viaje.relojDemo); clearInterval(viaje.relojBanner);
     $("bannerCaja").hidden = true;
+    $("aviso").hidden = false;
     if (viaje.bloqueo) { try { viaje.bloqueo.release(); } catch (e) {} }
   }
   if (window.speechSynthesis) speechSynthesis.cancel();
@@ -1086,7 +1100,6 @@ function terminar() {
   mostrarPantalla(false);
 }
 
-function mostrarBotonClave() { $("borrarClave").hidden = false; }
 
 /* ---------- Demostración: recorrido e incidentes inventados, sin usar TomTom ni GPS ---------- */
 function iniciarDemo() {
@@ -1106,9 +1119,12 @@ function iniciarDemo() {
     { geometry: { type: "Point", coordinates: [-58.90, -34.20] }, properties: { id: "lejos", iconCategory: 8, from: "Calle lejana (ejemplo)", to: "", delay: 0, roadNumbers: [] } }
   ]);
   estado("Demostración: el auto avanza solo. No usa tu ubicación ni tu cupo de TomTom.");
-  let i = 0;
+  let i = 0, segundos = 0;
   viaje.relojDemo = setInterval(() => {
     i = Math.min(i + 2, n - 1);
+    // A los 30 segundos el auto se detiene, para ver cómo queda el banner.
+    if (++segundos > 30 && !viaje.demoDetenido) { viaje.demoDetenido = i; viaje.incidentes = []; viaje.radares = []; viaje.radarActivo = null; }
+    if (viaje.demoDetenido) { moverA({ ...ruta[viaje.demoDetenido], vel: 0, rumbo: null }); return; }
     moverA({ ...ruta[i], vel: 118, rumbo: rumbo(ruta[i], ruta[i + 1]) });
   }, 1000);
 }
@@ -1135,8 +1151,10 @@ $("repetir").addEventListener("click", () => {
   if (vozElegida) u.voice = vozElegida;
   speechSynthesis.speak(u);
 });
-$("borrarClave").addEventListener("click", () => {
-  quitar("tomtom_clave"); $("bloqueClave").hidden = false; $("borrarClave").hidden = true; $("errorInicio").hidden = true; $("clave").focus();
+$("nombreUsuario").value = leer("nombre_usuario") || "";
+$("nombreUsuario").addEventListener("input", e => {
+  const n = e.target.value.trim();
+  if (n) guardar("nombre_usuario", n); else quitar("nombre_usuario");
 });
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible" || !viaje) return;
@@ -1144,8 +1162,6 @@ document.addEventListener("visibilitychange", () => {
   if (!viaje.demo) { estado("La página estuvo en pausa: mientras no se ve, no avisa. Actualizando..."); consultar(); }
 });
 
-if (claveFija()) { $("bloqueClave").hidden = true; }
-else if (leer("tomtom_clave")) { $("bloqueClave").hidden = true; mostrarBotonClave(); }
 $("atajosCerca").replaceChildren(...ATAJOS_CERCA.map(([nombre, texto]) => {
   const b = document.createElement("button");
   b.type = "button"; b.textContent = nombre;

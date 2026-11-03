@@ -96,6 +96,22 @@ td:not(:first-child), th:not(:first-child) { text-align: right; }
     </section>
 
     <section class="tarjeta">
+      <h2>Claves de acceso</h2>
+      <form id="formClaves" class="bloque" autocomplete="off">
+        <label>Clave de TomTom
+          <input id="cTomtom" type="password" autocapitalize="off" spellcheck="false" placeholder="Pegá la clave para cambiarla">
+          <span class="ayuda" id="cTomtomEstado"></span>
+        </label>
+        <label>Identificador de Google para la agenda
+          <input id="cGoogle" type="text" autocapitalize="off" spellcheck="false" placeholder="Si queda vacío, usa el actual">
+        </label>
+        <button id="guardarClaves" type="submit">Guardar claves</button>
+      </form>
+      <p class="ayuda">Copi lee estas claves desde cada teléfono, así que no son secretas del todo: por eso la de TomTom debe seguir limitada a la dirección de Copi.</p>
+      <p id="mensajeClaves" class="ayuda" role="status"></p>
+    </section>
+
+    <section class="tarjeta">
       <h2>Nuevo banner</h2>
       <form id="formBanner" class="bloque">
         <label>Nombre
@@ -229,6 +245,30 @@ async function cargarUso() {
   $("nViajes").textContent = viajes; $("nAperturas").textContent = aperturas;
 }
 
+async function cargarClaves() {
+  const d = await db.collection("config").doc("copi").get(), c = d.exists ? d.data() : {};
+  $("cTomtom").value = "";
+  $("cGoogle").value = c.googleClientId || "";
+  $("cTomtomEstado").textContent = c.tomtom ? "Cargada, termina en " + c.tomtom.slice(-4) + "." : "Todavía no está cargada acá.";
+}
+$("formClaves").addEventListener("submit", async e => {
+  e.preventDefault();
+  const m = $("mensajeClaves"), tomtom = $("cTomtom").value.trim(), google = $("cGoogle").value.trim();
+  if (tomtom && !/^[A-Za-z0-9]{20,}$/.test(tomtom)) { m.textContent = "Esa clave de TomTom no parece completa. Copiala con su botón de copiar."; return; }
+  $("guardarClaves").disabled = true;
+  try {
+    const cambios = { googleClientId: google };
+    if (tomtom) cambios.tomtom = tomtom;
+    await db.collection("config").doc("copi").set(cambios, { merge: true });
+    m.textContent = "Claves guardadas. Los teléfonos las toman al abrir Copi.";
+    await cargarClaves();
+  } catch (err) {
+    m.textContent = "No se pudieron guardar las claves.";
+  } finally {
+    $("guardarClaves").disabled = false;
+  }
+});
+
 $("ingresar").addEventListener("click", async () => {
   $("errorIngreso").textContent = "";
   try { await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
@@ -273,6 +313,7 @@ auth.onAuthStateChanged(async usuario => {
   if (!usuario) return;
   try {
     await cargarUso();
+    await cargarClaves();
     await cargarBanners();
     $("pantallaPanel").hidden = false;
   } catch (e) {
