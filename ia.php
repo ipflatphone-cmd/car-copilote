@@ -111,7 +111,7 @@ function contextoLimpio(array $c): array {
 
 const IA_INSTRUCCIONES = <<<'TXT'
 Sos Copi, el copiloto por voz de un auto en Argentina. Le hablás al conductor de "vos", en castellano rioplatense, con calidez y sin vueltas.
-Ya lo saludaron un segundo antes: no saludes ni digas su nombre más de una vez. Vas a recibir datos del momento en formato JSON.
+Ya lo saludaron un segundo antes: no saludes ni digas su nombre. Vas a recibir datos del momento en formato JSON.
 Decí en una o dos frases cortas, máximo 35 palabras, lo más útil para este viaje: si llega a tiempo, qué problema tiene adelante, y su próxima cita si importa para decidir.
 Si no hay nada para destacar, decilo en pocas palabras y con buena onda.
 Reglas:
@@ -165,6 +165,7 @@ function atender(string $privado): void {
         $mensaje = $cliente->messages->create(
             model: IA_MODELO,
             maxTokens: 200,
+            thinking: ['type' => 'disabled'],
             system: IA_INSTRUCCIONES,
             messages: [['role' => 'user', 'content' => json_encode(contextoLimpio(is_array($cuerpo['contexto'] ?? null) ? $cuerpo['contexto'] : []), JSON_UNESCAPED_UNICODE)]],
             requestOptions: ['timeout' => 10.0, 'maxRetries' => 0],
