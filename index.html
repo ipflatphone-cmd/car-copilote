@@ -936,11 +936,12 @@ async function comentarioIa() {
       method: "POST", headers: { "Content-Type": "application/json" }, signal: corte.signal,
       body: JSON.stringify({ pase, contexto: contextoIa() })
     });
-    if (!r.ok) return;
+    if (!r.ok) { if (viaje === esteViaje) estado("El copiloto con IA no respondió (código " + r.status + ")."); return; }
     const j = await r.json();
     if (j.frase && viaje === esteViaje) decir(j.frase, null, true);
   } catch (e) {
     // Sin IA el viaje sigue igual: los avisos no dependen de esto.
+    if (viaje === esteViaje) estado("El copiloto con IA no respondió. Revisá la conexión.");
   } finally {
     clearTimeout(reloj);
   }
