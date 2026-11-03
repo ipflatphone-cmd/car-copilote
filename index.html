@@ -285,6 +285,12 @@ footer a, .ayuda a { color: var(--azul); }
   </div>
 
   <div class="bloque">
+    <h2>Copiloto con IA</h2>
+    <button class="interruptor" id="interruptorIa" type="button"><span>Comentario al salir</span><span id="interruptorIaEstado">OFF</span></button>
+    <p class="ayuda" id="iaAyuda"></p>
+  </div>
+
+  <div class="bloque">
     <h2>Mis datos</h2>
     <button id="demo" type="button">Ver demostración, sin salir</button>
     <button class="discreto" id="olvidarLugares" type="button">Olvidar mis lugares</button>
@@ -332,7 +338,7 @@ function quitar(k) { try { localStorage.removeItem(k); } catch (e) {} programarS
 
 /* ---------- Perfil de cada usuario: se copia a su cuenta para tenerlo en otro teléfono ---------- */
 const CLAVES_PERFIL = ["nombre_usuario", "voz_tipo", "voz_nombre_mujer", "voz_nombre_hombre", "voz_nombre_mayordomo",
-  "voz_cortes", "voz_radares", "voz_velocidad", "voz_trafico", "lugares", "no_favoritos", "bienvenida_hecha"];
+  "voz_cortes", "voz_radares", "voz_velocidad", "voz_trafico", "lugares", "no_favoritos", "bienvenida_hecha", "copiloto_ia"];
 let usuario = null, autenticacion = null, relojSubida = null, aplicandoPerfil = false;
 function programarSubida(k) {
   if (!usuario || aplicandoPerfil || !CLAVES_PERFIL.includes(k)) return;
@@ -359,6 +365,7 @@ function aplicarPerfil(p) {
 function borrarPerfilLocal() {
   aplicandoPerfil = true;
   CLAVES_PERFIL.forEach(quitar);
+  quitar("agenda_citas");
   aplicandoPerfil = false;
 }
 async function alCambiarCuenta(u) {
@@ -434,6 +441,7 @@ function saludoDelDia() {
 }
 function refrescarPerfil() {
   $("saludo").textContent = saludoDelDia();
+  dibujarIa();
   if (document.activeElement !== $("nombreUsuario")) $("nombreUsuario").value = leer("nombre_usuario") || "";
   $("cuentaEstado").textContent = usuario
     ? "Ingresaste como " + (usuario.email || "tu cuenta de Google") + ". Tu configuración se guarda en tu cuenta."
@@ -872,6 +880,7 @@ async function leerAgenda(token) {
   }
 }
 function dibujarAgenda(citas) {
+  guardar("agenda_citas", JSON.stringify(citas.map(c => ({ inicio: c.start.dateTime, titulo: c.summary || "Cita" }))));
   $("avisoAgenda").textContent = citas.length ? "Tocá una cita con dirección para salir hacia ahí." : "No tenés citas con horario en las próximas 24 horas.";
   $("listaAgenda").replaceChildren(...citas.map(c => {
     const inicio = new Date(c.start.dateTime), titulo = c.summary || "Cita";
@@ -882,6 +891,59 @@ function dibujarAgenda(citas) {
     else b.disabled = true;
     return b;
   }));
+}
+
+/* ---------- Copiloto con IA: un comentario por viaje, armado en el servidor ---------- */
+const iaActiva = () => !!usuario && leer("copiloto_ia") === "si";
+function dibujarIa() {
+  const b = $("interruptorIa"), activa = iaActiva();
+  b.disabled = !usuario;
+  b.setAttribute("aria-pressed", activa ? "true" : "false");
+  $("interruptorIaEstado").textContent = activa ? "ON" : "OFF";
+  $("iaAyuda").textContent = usuario
+    ? "Al salir, Copi te comenta el viaje. Para armar la frase se envían a Anthropic tu nombre, la hora, tu destino, las calles con problemas y los títulos de tus próximas citas, nunca tus coordenadas de GPS."
+    : "Para usarlo, ingresá con tu cuenta de Google.";
+}
+function citasGuardadas() {
+  try {
+    return JSON.parse(leer("agenda_citas") || "[]").filter(c => new Date(c.inicio) > new Date());
+  } catch (e) { return []; }
+}
+function contextoIa() {
+  const ahora = new Date(), dia = d => d.toLocaleDateString("es-AR", { weekday: "long" });
+  const c = {
+    nombre: (leer("nombre_usuario") || "").trim(), hora: hora(ahora), dia: dia(ahora), modo: viaje.atento ? "atento" : "destino",
+    incidentes: viaje.incidentes.slice().sort((a, b) => metros(viaje.pos, a.punto) - metros(viaje.pos, b.punto)).slice(0, 4).map(i => ({
+      tipo: i.tipo, calle: i.calle, km: Math.round(metros(viaje.pos, i.punto) / 1000), demora: Math.round(i.demora / 60)
+    })),
+    citas: citasGuardadas().slice(0, 3).map(i => ({ hora: hora(new Date(i.inicio)), dia: dia(new Date(i.inicio)), titulo: i.titulo }))
+  };
+  if (viaje.dest && viaje.segundosLlegada != null) {
+    c.llegada = {
+      destino: viaje.dest.etiqueta || viaje.dest.nombre || "", hora: hora(new Date(Date.now() + viaje.segundosLlegada * 1000)),
+      minutos: Math.round(viaje.segundosLlegada / 60), demora: Math.round((viaje.ultimaDemora || 0) / 60),
+      limite: viaje.limite ? hora(viaje.limite) : ""
+    };
+  }
+  return c;
+}
+async function comentarioIa() {
+  if (!iaActiva() || !viaje || viaje.demo) return;
+  const esteViaje = viaje, corte = new AbortController(), reloj = setTimeout(() => corte.abort(), 12000);
+  try {
+    const pase = await usuario.getIdToken();
+    const r = await fetch("ia.php", {
+      method: "POST", headers: { "Content-Type": "application/json" }, signal: corte.signal,
+      body: JSON.stringify({ pase, contexto: contextoIa() })
+    });
+    if (!r.ok) return;
+    const j = await r.json();
+    if (j.frase && viaje === esteViaje) decir(j.frase, null, true);
+  } catch (e) {
+    // Sin IA el viaje sigue igual: los avisos no dependen de esto.
+  } finally {
+    clearTimeout(reloj);
+  }
 }
 
 /* ---------- Música: sugerencia según la hora, sin conocer tus gustos todavía ---------- */
@@ -1031,7 +1093,7 @@ async function empezar(demo, atento, lugar) {
     if (!claveFija()) return error("Copi todavía no tiene la clave de tráfico. Hay que cargarla en el administrador.");
   }
   // La voz del iPhone solo se destraba desde un toque: por eso se habla acá mismo.
-  decir(saludoDelDia() + ". " + (demo ? "Esta es una demostración." : atento ? "Quedo atento al camino." : "Listo para salir."), null, true);
+  decir(saludoDelDia() + ". " + (demo ? "Esta es una demostración." : iaActiva() ? "" : atento ? "Quedo atento al camino." : "Listo para salir."), null, true);
   viaje = viajeNuevo(demo, atento);
   $("marcaDemo").hidden = !demo;
   $("empezar").disabled = true;
@@ -1078,6 +1140,7 @@ async function iniciarReal(lugar) {
   mantenerPantalla();
   viaje.seguimiento = navigator.geolocation.watchPosition(alMoverse, () => estado("Sin señal de GPS"), { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 });
   await consultar();
+  comentarioIa();
   viaje.reloj = setInterval(latido, 30000);
 }
 
@@ -1243,6 +1306,7 @@ function revisarRadares() {
 
 function actualizarLlegada(segundos, demora) {
   const llega = new Date(Date.now() + segundos * 1000);
+  viaje.segundosLlegada = segundos;
   if (viaje.ultimaDemora != null && demora - viaje.ultimaDemora >= 300) {
     decir("El tráfico empeoró: " + Math.round((demora - viaje.ultimaDemora) / 60) + " minutos más de demora.", "trafico");
   }
@@ -1455,6 +1519,7 @@ $("abrirAjustes").addEventListener("click", () => mostrarAjustes(true));
 $("cerrarAjustes").addEventListener("click", () => mostrarAjustes(false));
 $("cuentaIngresar").addEventListener("click", () => ingresarConGoogle($("cuentaError")));
 $("cuentaSalir").addEventListener("click", salirDeCuenta);
+$("interruptorIa").addEventListener("click", () => { guardar("copiloto_ia", iaActiva() ? "no" : "si"); dibujarIa(); });
 $("borrarDatos").addEventListener("click", borrarMisDatos);
 $("bienvenidaSeguir1").addEventListener("click", () => {
   const n = $("bienvenidaNombre").value.trim();
