@@ -145,19 +145,29 @@ function anotarTokens(string $privado, int $entrada, int $salida): void {
     flock($f, LOCK_UN); fclose($f);
 }
 
+/* Cuenta los pedidos rechazados por motivo, sin datos del usuario, para poder diagnosticar. */
+function anotarRechazo(string $privado, string $motivo): void {
+    $f = fopen("$privado/uso/rechazos-" . date('Y-m-d') . '.json', 'c+');
+    if (!$f || !flock($f, LOCK_EX)) return;
+    $u = json_decode((string) stream_get_contents($f), true) ?: [];
+    $u[$motivo] = ($u[$motivo] ?? 0) + 1;
+    rewind($f); ftruncate($f, 0); fwrite($f, json_encode($u));
+    flock($f, LOCK_UN); fclose($f);
+}
+
 function atender(string $privado): void {
     ini_set('display_errors', '0');
     date_default_timezone_set('America/Argentina/Buenos_Aires');
     if ($_SERVER['REQUEST_METHOD'] !== 'POST') responder(405, ['error' => 'metodo']);
 
     $cuerpo = json_decode((string) file_get_contents('php://input', false, null, 0, 20000), true);
-    if (!is_array($cuerpo) || !is_string($cuerpo['pase'] ?? null)) responder(401, ['error' => 'sin_cuenta']);
+    if (!is_array($cuerpo) || !is_string($cuerpo['pase'] ?? null)) { anotarRechazo($privado, 'sin_pase'); responder(401, ['error' => 'sin_cuenta']); }
     $uid = usuarioDelPase($cuerpo['pase'], fn(bool $renovar) => certificados($privado, $renovar));
-    if ($uid === null) responder(401, ['error' => 'sin_cuenta']);
+    if ($uid === null) { anotarRechazo($privado, 'pase_invalido'); responder(401, ['error' => 'sin_cuenta']); }
 
     $clave = is_file("$privado/anthropic.key") ? trim((string) file_get_contents("$privado/anthropic.key")) : '';
-    if ($clave === '') responder(503, ['error' => 'sin_clave']);
-    if (!reservarUso($privado, $uid)) responder(429, ['error' => 'tope']);
+    if ($clave === '') { anotarRechazo($privado, 'sin_clave'); responder(503, ['error' => 'sin_clave']); }
+    if (!reservarUso($privado, $uid)) { anotarRechazo($privado, 'tope'); responder(429, ['error' => 'tope']); }
 
     require "$privado/vendor/autoload.php";
     try {
@@ -177,6 +187,7 @@ function atender(string $privado): void {
         anotarTokens($privado, (int) $mensaje->usage->inputTokens, (int) $mensaje->usage->outputTokens);
     } catch (Throwable $e) {
         error_log('Copi IA: ' . get_class($e));
+        anotarRechazo($privado, 'error_ia');
         responder(502, ['error' => 'ia']);
     }
     $frase = mb_substr(texto(str_replace(['*', '#', '`', '_'], '', $frase), 400), 0, 400);
